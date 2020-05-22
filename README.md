@@ -6,6 +6,8 @@ This plugin exposes an implementation of the [TimeSeriesStorage](https://github.
 
 ## Usage
 
+Start Cortex - see https://cortexmetrics.io/docs/getting-started/
+
 Build and install the plugin into your local Maven repository using:
 ```
 mvn clean install
