@@ -29,7 +29,6 @@
 package org.opennms.timeseries.cortex;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Collections;
@@ -39,7 +38,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -58,6 +56,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xerial.snappy.Snappy;
 
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.MetricRegistry;
 import com.google.common.collect.Sets;
 
 import cortex.Cortex;
@@ -69,7 +69,6 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
-import okhttp3.ResponseBody;
 import prometheus.PrometheusRemote;
 import prometheus.PrometheusTypes;
 
@@ -94,6 +93,9 @@ public class CortexTSS implements TimeSeriesStorage {
     private final OkHttpClient client;
     private final String writeUrl;
 
+    private final MetricRegistry metrics = new MetricRegistry();
+    private final Meter samplesWritten = metrics.meter("samplesWritten");
+
     private final ManagedChannel channel;
     private final IngesterGrpc.IngesterBlockingStub blockingStub;
     private final ResourceCache resourceCache;
@@ -116,6 +118,7 @@ public class CortexTSS implements TimeSeriesStorage {
         LOG.trace("Writing: {}", writeRequest);
         try {
             write(writeRequest);
+            samplesWritten.mark(samples.size());
         } catch (IOException e) {
             throw new StorageException(String.format("Failed to write %d samples.", samples.size()), e);
         }
@@ -205,7 +208,7 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     @Override
-    public List<Metric> getMetrics(Collection<Tag> tags) throws StorageException {
+    public List<Metric> getMetrics(Collection<Tag> tags) {
         LOG.info("Retrieving metrics for tags: {}", tags);
         if (tags.size() == 1) {
             Tag tag = tags.iterator().next();
@@ -260,7 +263,7 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     @Override
-    public List<Sample> getTimeseries(TimeSeriesFetchRequest request) throws StorageException {
+    public List<Sample> getTimeseries(TimeSeriesFetchRequest request) {
         LOG.info("Retrieving time series for metric: {}", request);
 
         Cortex.QueryRequest.Builder queryRequestBuilder = Cortex.QueryRequest.newBuilder()
@@ -318,5 +321,9 @@ public class CortexTSS implements TimeSeriesStorage {
         } catch (InterruptedException e) {
             LOG.info("Interrupted while awaiting for channel to shutdown.");
         }
+    }
+
+    public MetricRegistry getMetrics() {
+        return metrics;
     }
 }

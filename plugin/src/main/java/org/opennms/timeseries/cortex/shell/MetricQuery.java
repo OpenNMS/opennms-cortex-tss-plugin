@@ -45,7 +45,7 @@ import org.opennms.integration.api.v1.timeseries.Tag;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTag;
 import org.opennms.timeseries.cortex.CortexTSS;
 
-@Command(scope = "opennms-prometheus", name = "query-metrics", description = "Find metrics.", detailedDescription= "pairs")
+@Command(scope = "opennms-cortex", name = "query-metrics", description = "Find metrics.", detailedDescription= "pairs")
 @Service
 public class MetricQuery implements Action {
 

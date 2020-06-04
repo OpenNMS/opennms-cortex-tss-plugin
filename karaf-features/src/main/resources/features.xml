@@ -9,6 +9,7 @@
         <feature version="${grpc.version}" dependency="true">grpc</feature>
         <bundle dependency="true">mvn:com.google.protobuf/protobuf-java/${protoc.version}</bundle>
         <bundle dependency="true">mvn:org.xerial.snappy/snappy-java/${snappy.version}</bundle>
+        <bundle dependency="true">mvn:io.dropwizard.metrics/metrics-core/${metrics.version}</bundle>
         <bundle>mvn:org.opennms.plugins.timeseries/cortex-plugin/${project.version}</bundle>
     </feature>
 
