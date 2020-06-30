@@ -8,6 +8,13 @@ This plugin exposes an implementation of the [TimeSeriesStorage](https://github.
 
 Start Cortex - see https://cortexmetrics.io/docs/getting-started/
 
+You can also download:
+
+https://github.com/opennms-forge/stack-play/tree/master/standalone-cortex-minimal
+
+and start with
+`docker-compose up`
+
 Build and install the plugin into your local Maven repository using:
 ```
 mvn clean install
