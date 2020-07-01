@@ -231,10 +231,18 @@ public class CortexTSS implements TimeSeriesStorage {
 
         Cortex.LabelMatchers.Builder matchersBuilder = Cortex.LabelMatchers.newBuilder();
         for (Tag tag : tags) {
-            matchersBuilder.addMatchers(Cortex.LabelMatcher.newBuilder()
-                    .setType(Cortex.MatchType.EQUAL)
-                    .setName(tag.getKey())
-                    .setValue(tag.getValue()));
+            // Special handling for the metric name
+            if (IntrinsicTagNames.name.equals(tag.getKey())) {
+                matchersBuilder.addMatchers(Cortex.LabelMatcher.newBuilder()
+                        .setType(Cortex.MatchType.EQUAL)
+                        .setName(METRIC_NAME_LABEL)
+                        .setValue(sanitizeMetricName(tag.getValue())));
+            } else {
+                matchersBuilder.addMatchers(Cortex.LabelMatcher.newBuilder()
+                        .setType(Cortex.MatchType.EQUAL)
+                        .setName(sanitizeLabelName(tag.getKey()))
+                        .setValue(tag.getValue()));
+            }
         }
 
         Cortex.MetricsForLabelMatchersRequest matchRequest = Cortex.MetricsForLabelMatchersRequest.newBuilder()
