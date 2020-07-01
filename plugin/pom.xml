@@ -149,5 +149,11 @@
             <version>1.0.0-SNAPSHOT</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>1.14.3</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
