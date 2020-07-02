@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="INFO">
+    <Appenders>
+        <Console name="TESTCONTAINERS" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <Root level="info">
+            <AppenderRef ref="TESTCONTAINERS"/>
+        </Root>
+        <logger name="🐳 [docker-compose]" additivity="false">
+            <appender-ref ref="TESTCONTAINERS"/>
+        </logger>
+        <logger name="🐳 [docker-compose.exe]" additivity="false">
+            <appender-ref ref="TESTCONTAINERS"/>
+        </logger>
+        <logger name="docker[docker-compose.exe]" additivity="false">
+            <appender-ref ref="TESTCONTAINERS"/>
+        </logger>
+        <logger name="docker[docker-compose]"  additivity="false">
+            <appender-ref ref="TESTCONTAINERS"/>
+        </logger>
+        <logger name="org.testcontainers"  additivity="false">
+            <appender-ref ref="TESTCONTAINERS"/>
+        </logger>
+        <logger name="com.github.dockerjava" additivity="false">
+            <appender-ref ref="TESTCONTAINERS"/>
+        </logger>
+    </Loggers>
+
+</Configuration>
