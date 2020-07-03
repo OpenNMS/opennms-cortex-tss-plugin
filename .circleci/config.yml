@@ -6,23 +6,43 @@ executors:
       - image: circleci/openjdk:8u212-jdk-stretch
         environment:
           MAVEN_OPTS: -Xmx1g
+  system-test-executor:
+    machine:
+      image: ubuntu-1604:201903-01
 
 workflows:
   build-deploy:
     jobs:
       - build
+      - tests:
+          requires:
+            - build
 
 jobs:
   build:
     executor: build-executor
     steps:
       - checkout
-
       - run:
-          name: Run the tests
+          name: Compile source without tests
           command: |
-            mvn -DskipITs=false clean install test integration-test
+            mvn -DskipITs=true -DskipTests=true clean install
 
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - .m2
+            - project
+
+  tests:
+    executor: system-test-executor
+    steps:
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Run system test with docker-compose
+          command: |
+            mvn -DskipITs=false -DskipTests=false clean install test integration-test
       - run:
           name: Save test results
           command: |
@@ -31,17 +51,5 @@ jobs:
             find . -type f -regex ".*/target/surefire-reports/.*xml" -exec cp {} ~/junit/ \;
           when: always
 
-      # Save dependency cache
-      - save_cache:
-          paths:
-            - ~/.m2
-          key: v1-dependencies-{{ checksum "pom.xml" }}
-
       - store_test_results:
           path: ~/junit
-
-      - persist_to_workspace:
-          root: ~/
-          paths:
-            - project
-
