@@ -3,8 +3,7 @@ version: 2.1
 executors:
   build-executor:
     docker:
-      # - image: circleci/openjdk:8u212-jdk-stretch
-      - image: docker:19.03.0-git
+      - image: circleci/openjdk:8u212-jdk-stretch
         environment:
           MAVEN_OPTS: -Xmx1g
 
