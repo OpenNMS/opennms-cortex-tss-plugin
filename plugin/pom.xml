@@ -144,9 +144,9 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.opennms.plugins.tss</groupId>
-            <artifactId>plugin-tests</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
+            <groupId>org.opennms.integration.api</groupId>
+            <artifactId>tss-tests</artifactId>
+            <version>${opennms.api.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
