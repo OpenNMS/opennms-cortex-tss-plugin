@@ -20,6 +20,15 @@ Build and install the plugin into your local Maven repository using:
 mvn clean install
 ```
 
+Enable the TSS and configure:
+```
+echo "org.opennms.timeseries.strategy=integration
+org.opennms.timeseries.tin.metatags.tag.node=${node:label}
+org.opennms.timeseries.tin.metatags.tag.location=${node:location}
+org.opennms.timeseries.tin.metatags.tag.ifDescr=${interface:if-description}
+org.opennms.timeseries.tin.metatags.tag.label=${resource:label}" >> ${OPENNMS_HOME}/etc/opennms.properties.d/cortex.properties
+```
+
 From the OpenNMS Karaf shell:
 ```
 feature:repo-add mvn:org.opennms.plugins.timeseries/cortex-karaf-features/1.0.0-SNAPSHOT/xml
