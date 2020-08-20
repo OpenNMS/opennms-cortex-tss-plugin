@@ -113,7 +113,10 @@ public class CortexTSS implements TimeSeriesStorage {
         this.writeUrl = Objects.requireNonNull(writeUrl);
         this.client = new OkHttpClient();
 
-        ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forTarget(ingressGrpcTarget).usePlaintext();
+        ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forTarget(ingressGrpcTarget)
+                // TODO: Make this configurable?
+                .maxInboundMessageSize(10 * 1024 * 1024)
+                .usePlaintext();
         this.channel = channelBuilder.build();
         this.blockingStub = IngesterGrpc.newBlockingStub(channel);
     }
