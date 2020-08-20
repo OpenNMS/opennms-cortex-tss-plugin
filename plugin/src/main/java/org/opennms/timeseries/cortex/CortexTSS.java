@@ -89,6 +89,10 @@ public class CortexTSS implements TimeSeriesStorage {
     public static final Pattern METRIC_NAME_PATTERN = Pattern.compile("^[a-zA-Z_:][a-zA-Z0-9_:]*$");
     // Label names must match
     public static final Pattern LABEL_NAME_PATTERN = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]*$");
+    // Used to sanitize the metric name
+    private static final Pattern SANITIZE_METRIC_NAME_PATTERN = Pattern.compile("[^a-zA-Z0-9_:]");
+    // Used to sanitize the label name
+    private static final Pattern SANITIZE_LABEL_NAME_PATTERN = Pattern.compile("[^a-zA-Z0-9_]");
 
     private static final MediaType PROTOBUF_MEDIA_TYPE = MediaType.parse("application/x-protobuf");
 
@@ -218,11 +222,11 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public static String sanitizeMetricName(String metricName) {
-        return metricName.replaceAll("[^a-zA-Z0-9_:]", "_");
+        return SANITIZE_METRIC_NAME_PATTERN.matcher(metricName).replaceAll("_");
     }
 
     public static String sanitizeLabelName(String labelName) {
-        return labelName.replaceAll("[^a-zA-Z0-9_]", "_");
+        return SANITIZE_LABEL_NAME_PATTERN.matcher(labelName).replaceAll("_");
     }
 
     @Override
