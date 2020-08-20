@@ -60,6 +60,7 @@ import org.xerial.snappy.Snappy;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.collect.Sets;
+import com.google.protobuf.ByteString;
 
 import cortex.Cortex;
 import cortex.IngesterGrpc;
@@ -84,6 +85,7 @@ public class CortexTSS implements TimeSeriesStorage {
 
     // Label name indicating the metric name of a timeseries.
     private static final String METRIC_NAME_LABEL = "__name__";
+    private static final ByteString METRIC_NAME_LABEL_BYTE_STRING = ByteString.copyFromUtf8(METRIC_NAME_LABEL);
 
     // Metric names must match
     public static final Pattern METRIC_NAME_PATTERN = Pattern.compile("^[a-zA-Z_:][a-zA-Z0-9_:]*$");
@@ -118,6 +120,26 @@ public class CortexTSS implements TimeSeriesStorage {
 
     @Override
     public void store(final List<Sample> samples) throws StorageException {
+        storeSamplesViagRPC(samples);
+    }
+
+    private void storeSamplesViagRPC(final List<Sample> samples) throws StorageException {
+        final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
+                .sorted(Comparator.comparing(Sample::getTime))
+                .collect(Collectors.toList());
+        Cortex.WriteRequest.Builder writeBuilder = Cortex.WriteRequest.newBuilder();
+        samplesSorted.forEach(s -> writeBuilder.addTimeseries(toCortexTimeSeries(s)));
+        Cortex.WriteRequest writeRequest = writeBuilder.build();
+        LOG.trace("Writing: {}", writeRequest);
+        try {
+            blockingStub.push(writeRequest);
+            samplesWritten.mark(samples.size());
+        } catch (Exception e) {
+            throw new StorageException(String.format("Failed to write %d samples.", samples.size()), e);
+        }
+    }
+
+    private void storeSamplesViaHTTP(final List<Sample> samples) throws StorageException {
         final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
@@ -217,6 +239,29 @@ public class CortexTSS implements TimeSeriesStorage {
         // Add the sample timestamp & value
         builder.addSamples(PrometheusTypes.Sample.newBuilder()
                 .setTimestamp(sample.getTime().toEpochMilli())
+                .setValue(sample.getValue()));
+        return builder;
+    }
+
+    private static Cortex.TimeSeries.Builder toCortexTimeSeries(Sample sample) {
+        Cortex.TimeSeries.Builder builder = Cortex.TimeSeries.newBuilder();
+        // Convert all of the tags to labels
+        Stream.concat(sample.getMetric().getIntrinsicTags().stream(), sample.getMetric().getMetaTags().stream())
+                .forEach(tag -> {
+                    // Special handling for the metric name
+                    if (IntrinsicTagNames.name.equals(tag.getKey())) {
+                        builder.addLabels(Cortex.LabelPair.newBuilder()
+                                .setName(ByteString.copyFromUtf8(METRIC_NAME_LABEL))
+                                .setValue(ByteString.copyFromUtf8(sanitizeMetricName(tag.getValue()))));
+                    } else {
+                        builder.addLabels(Cortex.LabelPair.newBuilder()
+                                .setName(ByteString.copyFromUtf8(sanitizeLabelName(tag.getKey())))
+                                .setValue(ByteString.copyFromUtf8(tag.getValue())));
+                    }
+                });
+        // Add the sample timestamp & value
+        builder.addSamples(Cortex.Sample.newBuilder()
+                .setTimestampMs(sample.getTime().toEpochMilli())
                 .setValue(sample.getValue()));
         return builder;
     }
