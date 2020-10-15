@@ -108,6 +108,7 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Meter samplesWritten = metrics.meter("samplesWritten");
 
     private final ManagedChannel channel;
+    private final IngesterGrpc.IngesterBlockingStub blockingStub;
 
     public CortexTSS(String writeUrl, String ingressGrpcTarget, final String readUrl) {
         this.writeUrl = Objects.requireNonNull(writeUrl);
@@ -119,6 +120,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 .maxInboundMessageSize(10 * 1024 * 1024)
                 .usePlaintext();
         this.channel = channelBuilder.build();
+        this.blockingStub = IngesterGrpc.newBlockingStub(channel);
     }
 
     @Override
