@@ -40,6 +40,7 @@ Configure (you can omit that if you use the default values):
 config:edit org.opennms.plugins.tss.cortex
 property-set writeUrl http://localhost:9009/api/prom/push
 property-set ingressGrpcTarget localhost:9095
+property-set readUrl http://localhost:9009/prometheus/api/v1
 config:update
 ```
 

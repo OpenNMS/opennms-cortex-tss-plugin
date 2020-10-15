@@ -38,7 +38,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
     @Before
     public void setUp() throws StorageException {
-        cortexTss = new CortexTSS("http://localhost:9009/api/prom/push", "localhost:9095", "http://localhost:9009/prometheus/api/v1/");
+        cortexTss = new CortexTSS("http://localhost:9009/api/prom/push", "localhost:9095", "http://localhost:9009/prometheus/api/v1");
         super.setUp();
     }
 
