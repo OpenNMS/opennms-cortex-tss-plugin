@@ -29,11 +29,8 @@
 package org.opennms.timeseries.cortex;
 
 import java.io.IOException;
-import java.time.Instant;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -50,9 +47,6 @@ import org.opennms.integration.api.v1.timeseries.StorageException;
 import org.opennms.integration.api.v1.timeseries.Tag;
 import org.opennms.integration.api.v1.timeseries.TimeSeriesFetchRequest;
 import org.opennms.integration.api.v1.timeseries.TimeSeriesStorage;
-import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
-import org.opennms.integration.api.v1.timeseries.immutables.ImmutableSample;
-import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xerial.snappy.Snappy;
@@ -77,6 +71,12 @@ import prometheus.PrometheusTypes;
 
 /**
  * Time Series Storage integration for Cortex.
+ * We use the cortex api to write data (writes to the ingester) and the prometheus api to read data (reads from the Querier).
+ * Even though it's possible to read from the ingester it does only give us the most resent data (still held in memory) therefore
+ * we use the querier.
+ * Docs:
+ * - https://cortexmetrics.io/docs/api/
+ * - https://prometheus.io/docs/prometheus/latest/querying/api/
  *
  * @author jwhite
  */
@@ -84,7 +84,7 @@ public class CortexTSS implements TimeSeriesStorage {
     private static final Logger LOG = LoggerFactory.getLogger(CortexTSS.class);
 
     // Label name indicating the metric name of a timeseries.
-    private static final String METRIC_NAME_LABEL = "__name__";
+    public static final String METRIC_NAME_LABEL = "__name__";
     private static final ByteString METRIC_NAME_LABEL_BYTE_STRING = ByteString.copyFromUtf8(METRIC_NAME_LABEL);
 
     // Metric names must match
@@ -98,19 +98,20 @@ public class CortexTSS implements TimeSeriesStorage {
 
     private static final MediaType PROTOBUF_MEDIA_TYPE = MediaType.parse("application/x-protobuf");
 
-    private final static Set<String> INTRINSIC_TAG_NAMES = Sets.newHashSet(IntrinsicTagNames.name, IntrinsicTagNames.resourceId);
+    public final static Set<String> INTRINSIC_TAG_NAMES = Sets.newHashSet(IntrinsicTagNames.name, IntrinsicTagNames.resourceId);
 
     private final OkHttpClient client;
     private final String writeUrl;
+    private final String readUrl;
 
     private final MetricRegistry metrics = new MetricRegistry();
     private final Meter samplesWritten = metrics.meter("samplesWritten");
 
     private final ManagedChannel channel;
-    private final IngesterGrpc.IngesterBlockingStub blockingStub;
 
-    public CortexTSS(String writeUrl, String ingressGrpcTarget) {
+    public CortexTSS(String writeUrl, String ingressGrpcTarget, final String readUrl) {
         this.writeUrl = Objects.requireNonNull(writeUrl);
+        this.readUrl = Objects.requireNonNull(readUrl);
         this.client = new OkHttpClient();
 
         ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forTarget(ingressGrpcTarget)
@@ -118,7 +119,6 @@ public class CortexTSS implements TimeSeriesStorage {
                 .maxInboundMessageSize(10 * 1024 * 1024)
                 .usePlaintext();
         this.channel = channelBuilder.build();
-        this.blockingStub = IngesterGrpc.newBlockingStub(channel);
     }
 
     @Override
@@ -188,41 +188,6 @@ public class CortexTSS implements TimeSeriesStorage {
         }
     }
 
-    /* We use gRPC for reading.
-    public PrometheusRemote.ReadResponse read(PrometheusRemote.ReadRequest readRequest) throws IOException {
-        byte[] compressed = Snappy.compress(readRequest.toByteArray());
-        RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, compressed);
-        Request request = new Request.Builder()
-                .url(readUrl)
-                .addHeader("X-Prometheus-Remote-Read-Version", "0.1.0")
-                .addHeader("Content-Encoding", "snappy")
-                .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
-                .post(body)
-                .build();
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                String bodyMsg = "";
-                ResponseBody responseBody = response.body();
-                if (responseBody != null) {
-                    try {
-                        bodyMsg = responseBody.string();
-                    } finally {
-                        responseBody.close();
-                    }
-                }
-                throw new IOException("Oops: " + response.code() + " ah: " + response.message() + " oh: " + bodyMsg);
-            }
-            ResponseBody responseBody = response.body();
-            if (responseBody != null) {
-                try (InputStream is = responseBody.byteStream()) {
-                    return PrometheusRemote.ReadResponse.parseFrom(is);
-                }
-            }
-            return PrometheusRemote.ReadResponse.newBuilder().build();
-        }
-    }
-    */
-
     private static PrometheusTypes.TimeSeries.Builder toTimeSeries(Sample sample) {
         PrometheusTypes.TimeSeries.Builder builder = PrometheusTypes.TimeSeries.newBuilder();
         // Convert all of the tags to labels
@@ -278,105 +243,93 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     @Override
-    public List<Metric> getMetrics(Collection<Tag> tags) {
+    public List<Metric> getMetrics(Collection<Tag> tags) throws StorageException {
         LOG.info("Retrieving metrics for tags: {}", tags);
-
-        Cortex.LabelMatchers.Builder matchersBuilder = Cortex.LabelMatchers.newBuilder();
-        for (Tag tag : tags) {
-            // Special handling for the metric name
-            if (IntrinsicTagNames.name.equals(tag.getKey())) {
-                matchersBuilder.addMatchers(Cortex.LabelMatcher.newBuilder()
-                        .setType(Cortex.MatchType.EQUAL)
-                        .setName(METRIC_NAME_LABEL)
-                        .setValue(sanitizeMetricName(tag.getValue())));
-            } else {
-                matchersBuilder.addMatchers(Cortex.LabelMatcher.newBuilder()
-                        .setType(Cortex.MatchType.EQUAL)
-                        .setName(sanitizeLabelName(tag.getKey()))
-                        .setValue(tag.getValue()));
-            }
-        }
-
-        Cortex.MetricsForLabelMatchersRequest matchRequest = Cortex.MetricsForLabelMatchersRequest.newBuilder()
-                .addMatchersSet(matchersBuilder)
-                .build();
-        Cortex.MetricsForLabelMatchersResponse response = blockingStub.metricsForLabelMatchers(matchRequest);
-        return response.getMetricList().stream()
-                .map(CortexTSS::toMetric)
-                .collect(Collectors.toList());
-    }
-
-    protected static Metric toMetric(Cortex.Metric cortexMetric) {
-        return toMetric(cortexMetric.getLabelsList());
-    }
-
-    private static Metric toMetric(List<Cortex.LabelPair> labelPairs) {
-        final Set<Tag> intrinsicTags = new LinkedHashSet<>();
-        final Set<Tag> metaTags = new LinkedHashSet<>();
-        for (Cortex.LabelPair labelPair : labelPairs) {
-            final String labelName = labelPair.getName().toStringUtf8();
-            final String labelValue = labelPair.getValue().toStringUtf8();
-
-            if (METRIC_NAME_LABEL.equals(labelName)) {
-                intrinsicTags.add(new ImmutableTag(IntrinsicTagNames.name, labelValue));
-                continue;
-            }
-
-            final Tag tag = new ImmutableTag(labelName, labelValue);
-            if (INTRINSIC_TAG_NAMES.contains(labelName)) {
-                intrinsicTags.add(tag);
-            } else {
-                metaTags.add(tag);
-            }
-        }
-        return new ImmutableMetric(intrinsicTags, metaTags);
+        String url = String.format("%s/series?match[]={%s}",
+                readUrl,
+                tagsToQuery(tags));
+        String json = makeCallToQueryApi(url);
+        return ResultMapper.fromSeriesQueryResult(json);
     }
 
     @Override
-    public List<Sample> getTimeseries(TimeSeriesFetchRequest request) {
+    public List<Sample> getTimeseries(TimeSeriesFetchRequest request) throws StorageException {
         LOG.info("Retrieving time series for metric: {}", request);
 
-        Cortex.QueryRequest.Builder queryRequestBuilder = Cortex.QueryRequest.newBuilder()
-                .setStartTimestampMs(request.getStart().toEpochMilli())
-                .setEndTimestampMs(request.getEnd().toEpochMilli());
+        String url = String.format("%s/query_range?query={%s}&start=%s&end=%s&step=%ss",
+                readUrl,
+                tagsToQuery(request.getMetric().getIntrinsicTags()),
+                request.getStart().getEpochSecond(),
+                request.getEnd().getEpochSecond(),
+                determineStepInSeconds(request)
+        );
+        String json = makeCallToQueryApi(url);
+        return ResultMapper.fromRangeQueryResult(json);
 
-        // Convert all of the tags to labels
-        request.getMetric().getIntrinsicTags().forEach(tag -> {
-                    // Special handling for the metric name
-                    if (IntrinsicTagNames.name.equals(tag.getKey())) {
-                        queryRequestBuilder.addMatchers(Cortex.LabelMatcher.newBuilder()
-                                .setType(Cortex.MatchType.EQUAL)
-                                .setName(METRIC_NAME_LABEL)
-                                .setValue(sanitizeMetricName(tag.getValue())));
-                    } else {
-                        queryRequestBuilder.addMatchers(Cortex.LabelMatcher.newBuilder()
-                                .setType(Cortex.MatchType.EQUAL)
-                                .setName(sanitizeLabelName(tag.getKey()))
-                                .setValue(tag.getValue()));
+    }
+
+    private String makeCallToQueryApi(final String url) throws StorageException {
+
+        Request httpRequest = new Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
+                .get()
+                .build();
+        try (Response response = client.newCall(httpRequest).execute()) {
+            if (!response.isSuccessful()) {
+                String bodyMsg = "";
+                ResponseBody responseBody = response.body();
+                if (responseBody != null) {
+                    try {
+                        bodyMsg = responseBody.string();
+                    } finally {
+                        responseBody.close();
                     }
-                });
-
-        Cortex.QueryRequest queryRequest = queryRequestBuilder.build();
-        LOG.info("Retrieving time series for request: {} with query: {}", request, queryRequest);
-
-        Cortex.QueryResponse queryResponse = blockingStub.query(queryRequest);
-        if (queryResponse.getTimeseriesCount() < 1) {
-            LOG.info("No matching series found.");
-            return Collections.emptyList();
+                }
+                throw new StorageException(String.format("Call to %s failed: response code:%s, response message:%s, bodyMessage:%s", url, response.code(), response.message(), bodyMsg));
+            }
+            ResponseBody responseBody = response.body();
+            if (responseBody != null) {
+                return responseBody.string();
+            } else {
+                throw new StorageException(String.format("Call to %s delivered no body.", url));
+            }
+        } catch (IOException | StorageException e) {
+            throw new StorageException(String.format("Call to %s failed.", url), e);
         }
-        if (queryResponse.getTimeseriesCount() > 1) {
-            LOG.info("Multiple series found, using the first.");
+    }
+
+    static long determineStepInSeconds(TimeSeriesFetchRequest request) {
+        // step cannot be 0, Prometheus always aggregates in a range query.
+        // so we try to calculate a small step but not too small for the range since we don't want to have too many results
+        // the maximum seems to be 11,000
+        // but we will limit to 1000
+        if (request.getStep().getSeconds() > 0) {
+            return request.getStep().getSeconds();
         }
-        Cortex.TimeSeries timeSeries = queryResponse.getTimeseries(0);
-        // Derive the metrics from the tags so that we include the type
-        Metric metric = toMetric(timeSeries.getLabelsList());
-        return timeSeries.getSamplesList().stream()
-                .map(s -> ImmutableSample.builder()
-                        .metric(metric)
-                        .time(Instant.ofEpochMilli(s.getTimestampMs()))
-                        .value(s.getValue())
-                        .build())
-                .collect(Collectors.toList());
+        long durationInSeconds = request.getEnd().getEpochSecond() - request.getStart().getEpochSecond();
+        double step = Math.ceil(durationInSeconds / 1000.0);
+        return Math.max(1L, (long) step);
+    }
+
+    private String tagsToQuery(final Collection<Tag> tags) {
+        StringBuilder b = new StringBuilder();
+        for (Tag tag : tags) {
+            String key;
+            String value;
+            if (IntrinsicTagNames.name.equals(tag.getKey())) {
+                key = METRIC_NAME_LABEL;
+                value = sanitizeMetricName(tag.getValue());
+            } else {
+                key = sanitizeLabelName(tag.getKey());
+                value = tag.getValue();
+            }
+            if (b.length() > 0) {
+                b.append(", ");
+            }
+            b.append(key).append("=\"").append(value).append("\"");
+        }
+        return b.toString();
     }
 
     @Override
