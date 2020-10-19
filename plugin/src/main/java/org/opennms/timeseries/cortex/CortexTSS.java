@@ -305,12 +305,11 @@ public class CortexTSS implements TimeSeriesStorage {
         // step cannot be 0, Prometheus always aggregates in a range query.
         // so we try to calculate a small step but not too small for the range since we don't want to have too many results
         // the maximum seems to be 11,000
-        // but we will limit to 1000
         if (request.getStep().getSeconds() > 0) {
             return request.getStep().getSeconds();
         }
         long durationInSeconds = request.getEnd().getEpochSecond() - request.getStart().getEpochSecond();
-        double step = Math.ceil(durationInSeconds / 1000.0);
+        double step = Math.ceil(durationInSeconds / 11000.0);
         return Math.max(1L, (long) step);
     }
 
