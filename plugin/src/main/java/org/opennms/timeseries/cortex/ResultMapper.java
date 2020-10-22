@@ -29,18 +29,18 @@ public class ResultMapper {
     private ResultMapper(){
     }
 
-    public static List<Sample> fromRangeQueryResult(final String queryResult) {
+    public static List<Sample> fromRangeQueryResult(final String queryResult, final Metric metric) {
         return iteratorToFiniteStream(new JSONObject(queryResult)
                 .getJSONObject("data")
                 .getJSONArray("result")
                 .iterator())
-                .map(j -> toSamples((JSONObject)j))
+                .map(j -> toSamples(((JSONObject)j), metric))
                 .flatMap(List::stream)
                 .collect(Collectors.toList());
     }
 
-    public static List<Sample> toSamples(final JSONObject result) {
-        final org.opennms.integration.api.v1.timeseries.Metric metric = toMetricFromMap(result.getJSONObject("metric").toMap());
+    public static List<Sample> toSamples(final JSONObject result, final Metric metric) {
+        // final org.opennms.integration.api.v1.timeseries.Metric metric = toMetricFromMap(result.getJSONObject("metric").toMap());
         return iteratorToFiniteStream(result.getJSONArray("values").iterator())
                 .map(value -> toSample(metric, (JSONArray)value)).collect(Collectors.toList());
     }

@@ -32,6 +32,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.opennms.timeseries.cortex.CortexTSS.LABEL_NAME_PATTERN;
+import static org.opennms.timeseries.cortex.CortexTSS.MAX_SAMPLES;
 import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_PATTERN;
 
 import java.time.Duration;
@@ -69,13 +70,13 @@ public class CortexTSSTest {
     public void shouldDetermineDurationCorrectly() {
 
         assertEquals(1, CortexTSS.determineStepInSeconds(request(1, 0)));
-        assertEquals(1, CortexTSS.determineStepInSeconds(request(1000, 0)));
-        assertEquals(2, CortexTSS.determineStepInSeconds(request(1001, 0)));
-        assertEquals(2, CortexTSS.determineStepInSeconds(request(2000, 0)));
-        assertEquals(3, CortexTSS.determineStepInSeconds(request(2001, 0)));
+        assertEquals(1, CortexTSS.determineStepInSeconds(request(MAX_SAMPLES, 0)));
+        assertEquals(2, CortexTSS.determineStepInSeconds(request(MAX_SAMPLES + 1, 0)));
+        assertEquals(2, CortexTSS.determineStepInSeconds(request(2 * MAX_SAMPLES, 0)));
+        assertEquals(3, CortexTSS.determineStepInSeconds(request(2 * MAX_SAMPLES + 1, 0)));
 
         // no calculation expected since the step is > 0:
-        assertEquals(1, CortexTSS.determineStepInSeconds(request(2001, 1)));
+        assertEquals(1, CortexTSS.determineStepInSeconds(request(2 * MAX_SAMPLES + 1, 1)));
     }
 
     private TimeSeriesFetchRequest request(final long end, final long step) {

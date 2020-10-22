@@ -29,8 +29,11 @@
 package org.opennms.timeseries.cortex;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,6 +43,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.opennms.integration.api.v1.timeseries.Aggregation;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
@@ -53,6 +57,8 @@ import org.xerial.snappy.Snappy;
 
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
 import com.google.protobuf.ByteString;
 
@@ -67,7 +73,6 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import prometheus.PrometheusRemote;
-import prometheus.PrometheusTypes;
 
 /**
  * Time Series Storage integration for Cortex.
@@ -100,6 +105,10 @@ public class CortexTSS implements TimeSeriesStorage {
 
     public final static Set<String> INTRINSIC_TAG_NAMES = Sets.newHashSet(IntrinsicTagNames.name, IntrinsicTagNames.resourceId);
 
+    public final static Set<Aggregation> SUPPORTED_AGGREGATION = new HashSet<>(Arrays.asList(Aggregation.AVERAGE, Aggregation.MAX, Aggregation.MIN));
+
+    final static int MAX_SAMPLES = 1200;
+
     private final OkHttpClient client;
     private final String writeUrl;
     private final String readUrl;
@@ -110,17 +119,20 @@ public class CortexTSS implements TimeSeriesStorage {
     private final ManagedChannel channel;
     private final IngesterGrpc.IngesterBlockingStub blockingStub;
 
+    // when retrieving aggregated time series data we loose the metric information and thus take it from cache
+    private final Cache<String, Metric> metricCache;
+
     public CortexTSS(String writeUrl, String ingressGrpcTarget, final String readUrl) {
         this.writeUrl = Objects.requireNonNull(writeUrl);
         this.readUrl = Objects.requireNonNull(readUrl);
         this.client = new OkHttpClient();
 
         ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forTarget(ingressGrpcTarget)
-                // TODO: Make this configurable?
                 .maxInboundMessageSize(10 * 1024 * 1024)
                 .usePlaintext();
         this.channel = channelBuilder.build();
         this.blockingStub = IngesterGrpc.newBlockingStub(channel);
+        this.metricCache = CacheBuilder.newBuilder().maximumSize(1000).build();
     }
 
     @Override
@@ -140,22 +152,6 @@ public class CortexTSS implements TimeSeriesStorage {
             blockingStub.push(writeRequest);
             samplesWritten.mark(samples.size());
         } catch (Exception e) {
-            throw new StorageException(String.format("Failed to write %d samples.", samples.size()), e);
-        }
-    }
-
-    private void storeSamplesViaHTTP(final List<Sample> samples) throws StorageException {
-        final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
-                .sorted(Comparator.comparing(Sample::getTime))
-                .collect(Collectors.toList());
-        PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
-        samplesSorted.forEach(s -> writeBuilder.addTimeseries(toTimeSeries(s)));
-        PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
-        LOG.trace("Writing: {}", writeRequest);
-        try {
-            write(writeRequest);
-            samplesWritten.mark(samples.size());
-        } catch (IOException e) {
             throw new StorageException(String.format("Failed to write %d samples.", samples.size()), e);
         }
     }
@@ -188,29 +184,6 @@ public class CortexTSS implements TimeSeriesStorage {
         } catch (IOException ex) {
             return "null";
         }
-    }
-
-    private static PrometheusTypes.TimeSeries.Builder toTimeSeries(Sample sample) {
-        PrometheusTypes.TimeSeries.Builder builder = PrometheusTypes.TimeSeries.newBuilder();
-        // Convert all of the tags to labels
-        Stream.concat(sample.getMetric().getIntrinsicTags().stream(), sample.getMetric().getMetaTags().stream())
-                .forEach(tag -> {
-                    // Special handling for the metric name
-                    if (IntrinsicTagNames.name.equals(tag.getKey())) {
-                        builder.addLabels(PrometheusTypes.Label.newBuilder()
-                                .setName(METRIC_NAME_LABEL)
-                                .setValue(sanitizeMetricName(tag.getValue())));
-                    } else {
-                        builder.addLabels(PrometheusTypes.Label.newBuilder()
-                                .setName(sanitizeLabelName(tag.getKey()))
-                                .setValue(tag.getValue()));
-                    }
-                });
-        // Add the sample timestamp & value
-        builder.addSamples(PrometheusTypes.Sample.newBuilder()
-                .setTimestamp(sample.getTime().toEpochMilli())
-                .setValue(sample.getValue()));
-        return builder;
     }
 
     private static Cortex.TimeSeries.Builder toCortexTimeSeries(Sample sample) {
@@ -251,23 +224,56 @@ public class CortexTSS implements TimeSeriesStorage {
                 readUrl,
                 tagsToQuery(tags));
         String json = makeCallToQueryApi(url);
-        return ResultMapper.fromSeriesQueryResult(json);
+        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json);
+        metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
+        return metrics;
+    }
+
+    /** Returns the full metric (incl. meta data from the database).
+     * This is only needed if not in cache already - which it should be. */
+    private Optional<Metric> loadMetric(final Metric metric) throws StorageException {
+        Metric loadedMetric = this.metricCache.getIfPresent(metric.getKey());
+        if(loadedMetric == null) {
+            List<Metric> metrics = getMetrics(metric.getIntrinsicTags());
+            if(metrics.size() < 1 ) {
+                return Optional.empty();
+            }
+            loadedMetric = metrics.get(0);
+            this.metricCache.put(loadedMetric.getKey(), loadedMetric);
+        }
+        return Optional.of(loadedMetric);
     }
 
     @Override
     public List<Sample> getTimeseries(TimeSeriesFetchRequest request) throws StorageException {
         LOG.info("Retrieving time series for metric: {}", request);
 
-        String url = String.format("%s/query_range?query={%s}&start=%s&end=%s&step=%ss",
+        String url = String.format("%s/query_range?query=%s({%s})&start=%s&end=%s&step=%ss",
                 readUrl,
+                toFunction(request.getAggregation()),
                 tagsToQuery(request.getMetric().getIntrinsicTags()),
                 request.getStart().getEpochSecond(),
                 request.getEnd().getEpochSecond(),
                 determineStepInSeconds(request)
         );
+        Optional<Metric> metric = loadMetric(request.getMetric());
+        if(!metric.isPresent()) {
+            return Collections.emptyList();
+        }
         String json = makeCallToQueryApi(url);
-        return ResultMapper.fromRangeQueryResult(json);
+        return ResultMapper.fromRangeQueryResult(json, metric.get());
+    }
 
+    private String toFunction(final Aggregation aggregation) {
+        if(Aggregation.AVERAGE == aggregation){
+            return "avg";
+        } else if(Aggregation.MAX == aggregation) {
+            return "max";
+        } else if(Aggregation.MIN == aggregation) {
+            return "min";
+        } else {
+            throw new IllegalArgumentException("We don't support aggregation " + aggregation);
+        }
     }
 
     private String makeCallToQueryApi(final String url) throws StorageException {
@@ -309,7 +315,7 @@ public class CortexTSS implements TimeSeriesStorage {
             return request.getStep().getSeconds();
         }
         long durationInSeconds = request.getEnd().getEpochSecond() - request.getStart().getEpochSecond();
-        double step = Math.ceil(durationInSeconds / 11000.0);
+        double step = Math.ceil(durationInSeconds / (double)MAX_SAMPLES);
         return Math.max(1L, (long) step);
     }
 
@@ -353,5 +359,10 @@ public class CortexTSS implements TimeSeriesStorage {
 
     public MetricRegistry getMetrics() {
         return metrics;
+    }
+
+    @Override
+    public boolean supportsAggregation(Aggregation aggregation) {
+        return SUPPORTED_AGGREGATION.contains(aggregation);
     }
 }

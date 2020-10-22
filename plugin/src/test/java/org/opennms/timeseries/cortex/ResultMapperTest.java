@@ -48,7 +48,7 @@ public class ResultMapperTest {
     @Test
     public void shouldMapRangeQueryResult() throws IOException, URISyntaxException {
         String json = readStringFromFile("rangeQueryResult.json");
-        List<Sample> samples = ResultMapper.fromRangeQueryResult(json);
+        List<Sample> samples = ResultMapper.fromRangeQueryResult(json, expectedMetric);
 
         assertEquals(expectedMetric, samples.get(0).getMetric());
         assertEquals(Instant.ofEpochSecond(1602783564), samples.get(0).getTime());
