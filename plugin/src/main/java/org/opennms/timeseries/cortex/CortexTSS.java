@@ -45,6 +45,7 @@ import java.util.stream.Stream;
 
 import org.opennms.integration.api.v1.timeseries.Aggregation;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
+import org.opennms.integration.api.v1.timeseries.MetaTagNames;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
 import org.opennms.integration.api.v1.timeseries.StorageException;
@@ -246,22 +247,51 @@ public class CortexTSS implements TimeSeriesStorage {
 
     @Override
     public List<Sample> getTimeseries(TimeSeriesFetchRequest request) throws StorageException {
-        LOG.info("Retrieving time series for metric: {}", request);
 
-        String url = String.format("%s/query_range?query=%s({%s})&start=%s&end=%s&step=%ss",
-                readUrl,
-                toFunction(request.getAggregation()),
-                tagsToQuery(request.getMetric().getIntrinsicTags()),
-                request.getStart().getEpochSecond(),
-                request.getEnd().getEpochSecond(),
-                determineStepInSeconds(request)
-        );
+        // first load the original metric - we need it for the meta data
         Optional<Metric> metric = loadMetric(request.getMetric());
         if(!metric.isPresent()) {
             return Collections.emptyList();
         }
+
+        String query = createQuery(request, metric.get());
+        String url = String.format("%s/query_range?query=%s&start=%s&end=%s&step=%ss",
+                readUrl,
+                query,
+                request.getStart().getEpochSecond(),
+                request.getEnd().getEpochSecond(),
+                determineStepInSeconds(request));
+        LOG.info("Retrieving time series for metric: {} with query {}", request, url);
+
+
         String json = makeCallToQueryApi(url);
         return ResultMapper.fromRangeQueryResult(json, metric.get());
+    }
+
+    private String createQuery(final TimeSeriesFetchRequest request, final Metric metric) {
+        // We build the query from inside out
+        StringBuilder query = new StringBuilder();
+
+
+        // metrics
+        query.append("{");
+        query.append(tagsToQuery(request.getMetric().getIntrinsicTags()));
+        query.append("}");
+
+        // rate
+        if(metric.getFirstTagByKey(MetaTagNames.mtype).getValue().equals(Metric.Mtype.counter.name())) {
+            query.insert(0, "rate(");
+            query.append("[");
+            query.append(determineStepInSeconds(request)); // TODO: Patrick: is this correct?
+            query.append("s])");
+        }
+
+        // aggregation
+        query.insert(0,"(");
+        query.insert(0, toFunction(request.getAggregation()));
+        query.append(")");
+
+        return query.toString();
     }
 
     private String toFunction(final Aggregation aggregation) {

@@ -20,6 +20,7 @@ import org.junit.Test;
 import org.opennms.integration.api.v1.timeseries.AbstractStorageIntegrationTest;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
+import org.opennms.integration.api.v1.timeseries.MetaTagNames;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
 import org.opennms.integration.api.v1.timeseries.StorageException;
@@ -62,26 +63,26 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
      */
     @Override
     public void shouldGetSamplesForMetric() throws StorageException {
+        Metric metricOriginal = this.metrics.get(1); // metric with gauge
         ImmutableMetric.MetricBuilder builder = ImmutableMetric.builder();
-        ((Metric)this.metrics.get(0)).getIntrinsicTags().forEach(builder::intrinsicTag);
+        metricOriginal.getIntrinsicTags().forEach(builder::intrinsicTag);
         Metric metric = builder.build();
         TimeSeriesFetchRequest request = ImmutableTimeSeriesFetchRequest.builder()
                 .start(this.referenceTime.minusSeconds(300))
                 .end(this.referenceTime)
                 .metric(metric)
                 .aggregation(Aggregation.AVERAGE)
-                .step(Duration.ZERO)
+                .step(Duration.of(1, ChronoUnit.SECONDS))
                 .build();
         List<Sample> samples = storage.getTimeseries(request);
         // we expect 1 sample per second. The time series starts with the first recorded sample (60s ago) => 60 samples
         assertEquals(60, samples.size());
-        Metric originalMetric = this.samplesOfFirstMetric.get(0).getMetric();
 
         for (Sample sample : samples) {
-            assertEquals(originalMetric, sample.getMetric());
+            assertEquals(metricOriginal, sample.getMetric());
             // Metric.equals() doesn't include meta tags, therefore we need to test for it separately:
-            assertEquals(originalMetric.getMetaTags(), sample.getMetric().getMetaTags());
-            assertEquals(this.samplesOfFirstMetric.get(0).getValue(), sample.getValue());
+            assertEquals(metricOriginal.getMetaTags(), sample.getMetric().getMetaTags());
+            assertEquals(Double.valueOf(42.3D), sample.getValue());
         }
     }
 
@@ -91,6 +92,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
         this.metrics.get(0).getIntrinsicTags().forEach(builder::intrinsicTag);
         Metric metric = builder
                 .intrinsicTag(IntrinsicTagNames.name, UUID.randomUUID().toString())
+                .metaTag(MetaTagNames.mtype, Metric.Mtype.counter.name())
                 .build();
         Instant startTime = this.referenceTime.minus(90, ChronoUnit.DAYS);
         Duration step = Duration.of( (long) Math.ceil(Duration.between(startTime, referenceTime).getSeconds() / (double)CortexTSS.MAX_SAMPLES), ChronoUnit.SECONDS);
@@ -112,7 +114,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
                 .end(this.referenceTime)
                 .metric(metric)
                 .aggregation(Aggregation.AVERAGE)
-                .step(Duration.ZERO)
+                .step(step)
                 .build();
         List<Sample> samplesFromDb = storage.getTimeseries(request);
 
