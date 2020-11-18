@@ -30,10 +30,19 @@ package org.opennms.timeseries.cortex;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
+import static org.junit.Assert.assertEquals;
 import static org.opennms.timeseries.cortex.CortexTSS.LABEL_NAME_PATTERN;
+import static org.opennms.timeseries.cortex.CortexTSS.MAX_SAMPLES;
 import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_PATTERN;
 
+import java.time.Duration;
+import java.time.Instant;
+
 import org.junit.Test;
+import org.opennms.integration.api.v1.timeseries.Aggregation;
+import org.opennms.integration.api.v1.timeseries.TimeSeriesFetchRequest;
+import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
+import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTimeSeriesFetchRequest;
 
 public class CortexTSSTest {
 
@@ -55,6 +64,29 @@ public class CortexTSSTest {
         String sanitizedLabelName = CortexTSS.sanitizeLabelName(labelName);
         assertThat(METRIC_NAME_PATTERN.matcher(sanitizedLabelName).matches(), equalTo(true));
         assertThat(sanitizedLabelName, equalTo("SSH_127_0_0_1"));
+    }
+
+    @Test
+    public void shouldDetermineDurationCorrectly() {
+
+        assertEquals(1, CortexTSS.determineStepInSeconds(request(1, 0)));
+        assertEquals(1, CortexTSS.determineStepInSeconds(request(MAX_SAMPLES, 0)));
+        assertEquals(2, CortexTSS.determineStepInSeconds(request(MAX_SAMPLES + 1, 0)));
+        assertEquals(2, CortexTSS.determineStepInSeconds(request(2 * MAX_SAMPLES, 0)));
+        assertEquals(3, CortexTSS.determineStepInSeconds(request(2 * MAX_SAMPLES + 1, 0)));
+
+        // no calculation expected since the step is > 0:
+        assertEquals(1, CortexTSS.determineStepInSeconds(request(2 * MAX_SAMPLES + 1, 1)));
+    }
+
+    private TimeSeriesFetchRequest request(final long end, final long step) {
+        return ImmutableTimeSeriesFetchRequest.builder()
+                .start(Instant.ofEpochSecond(0))
+                .end(Instant.ofEpochSecond(end))
+                .aggregation(Aggregation.NONE)
+                .step(Duration.ofSeconds(step))
+                .metric(ImmutableMetric.builder().intrinsicTag("aa", "bb").build())
+                .build();
     }
 
 }
