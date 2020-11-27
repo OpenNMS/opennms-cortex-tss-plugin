@@ -139,7 +139,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
         // check if the timeseries ends around the end of the defined period
         Instant timeOfLastSample = samplesFromDb.get(samplesFromDb.size()-1).getTime();
-        assertTrue(timeOfLastSample.isBefore(referenceTime));
+        assertFalse(timeOfLastSample.isAfter(referenceTime));
         Instant expectedEarliestTimeOfLastSample = referenceTime.minus(12, ChronoUnit.HOURS);
         assertTrue(String.format("Expected timeOfLastSample=%s not before endTime-step=%s",
                 timeOfLastSample, expectedEarliestTimeOfLastSample),timeOfLastSample.isAfter(expectedEarliestTimeOfLastSample));
