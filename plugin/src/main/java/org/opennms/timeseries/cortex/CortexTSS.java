@@ -279,11 +279,12 @@ public class CortexTSS implements TimeSeriesStorage {
         query.append("}");
 
         // rate
+        long interval = (long)(determineStepInSeconds(request) * 2.1d); // make sure we always have at least 2 samples captured
         String type = metric.getFirstTagByKey(MetaTagNames.mtype).getValue();
         if(Metric.Mtype.count.name().equals(type) || Metric.Mtype.counter.name().equals(type)) {
             query.insert(0, "rate(");
             query.append("[");
-            query.append(determineStepInSeconds(request)); // TODO: Patrick: is this correct?
+            query.append(interval);
             query.append("s])");
         }
 
