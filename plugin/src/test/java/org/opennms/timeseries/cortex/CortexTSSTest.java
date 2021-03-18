@@ -37,11 +37,15 @@ import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_PATTERN;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.Test;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
+import org.opennms.integration.api.v1.timeseries.Tag;
 import org.opennms.integration.api.v1.timeseries.TimeSeriesFetchRequest;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
+import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTag;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTimeSeriesFetchRequest;
 
 public class CortexTSSTest {
@@ -89,4 +93,12 @@ public class CortexTSSTest {
                 .build();
     }
 
+    @Test
+    public void testTagsToQuery() {
+        final List<Tag> tags = new ArrayList<>();
+        tags.add(new ImmutableTag("resourceId", "response:Klatschmohnwiese:192.168.12.34:icmp"));
+        tags.add(new ImmutableTag("resourceId", "response:Klatschmohnwiese:2001\\:1234\\:1234\\:1234\\:1234\\:1234\\:1234\\:1234:icmp"));
+        final String query = CortexTSS.tagsToQuery(tags);
+        assertEquals("resourceId=\"response:Klatschmohnwiese:192.168.12.34:icmp\", resourceId=\"response:Klatschmohnwiese:2001\\\\:1234\\\\:1234\\\\:1234\\\\:1234\\\\:1234\\\\:1234\\\\:1234:icmp\"", query);
+    }
 }
