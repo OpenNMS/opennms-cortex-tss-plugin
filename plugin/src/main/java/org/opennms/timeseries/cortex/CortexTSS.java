@@ -351,7 +351,7 @@ public class CortexTSS implements TimeSeriesStorage {
         return Math.max(1L, (long) step);
     }
 
-    private String tagsToQuery(final Collection<Tag> tags) {
+    protected static String tagsToQuery(final Collection<Tag> tags) {
         StringBuilder b = new StringBuilder();
         for (Tag tag : tags) {
             String key;
@@ -361,7 +361,8 @@ public class CortexTSS implements TimeSeriesStorage {
                 value = sanitizeMetricName(tag.getValue());
             } else {
                 key = sanitizeLabelName(tag.getKey());
-                value = tag.getValue();
+                // see NMS-13157: the backslash must be escaped since it is the escape character itself
+                value = tag.getValue().replaceAll("\\\\", "\\\\\\\\");
             }
             if (b.length() > 0) {
                 b.append(", ");
