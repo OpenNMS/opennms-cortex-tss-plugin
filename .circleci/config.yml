@@ -20,7 +20,7 @@ workflows:
       - deploy:
           requires:
             - build
-            - test
+            - tests
           filters:
             branches:
               only:
@@ -91,5 +91,5 @@ jobs:
       - run:
           name: Deploy the artifacts
           command: |
-            mvn -s .circleci/.circleci.settings.xml -DskipTests deploy
+            mvn -s .circleci/.circleci.settings.xml -DskipTests -Dmaven.verify.skip=true -Dmaven.install.skip=true deploy
 
