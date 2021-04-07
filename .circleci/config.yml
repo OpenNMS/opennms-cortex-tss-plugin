@@ -71,25 +71,16 @@ jobs:
           path: ~/junit
 
   deploy:
-    machine: true
-
-    working_directory: ~/
-
+    executor: build-executor
     steps:
-      - attach_workspace:
-          at: ~/
-
       - checkout
 
-      # Download and cache dependencies
       - restore_cache:
           keys:
             - v1-dependencies-{{ checksum "pom.xml" }}
-            # fallback to using the latest cache if no exact match is found
-            - v1-dependencies-
 
       - run:
-          name: Deploy the artifacts
+          name: Upload snapshot
           command: |
             mvn -s .circleci/.circleci.settings.xml -DskipTests -Dmaven.verify.skip=true -Dmaven.install.skip=true deploy
 
