@@ -18,6 +18,8 @@ workflows:
           requires:
             - build
       - deploy:
+          context:
+            - OSSRH Principal
           requires:
             - build
             - tests
