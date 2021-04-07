@@ -30,11 +30,19 @@ jobs:
     executor: build-executor
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "pom.xml" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
       - run:
           name: Compile source without tests
           command: |
             mvn -DskipITs=true -DskipTests=true clean install
-
+      - save_cache:
+          paths:
+            - ~/.m2
+          key: v1-dependencies-{{ checksum "pom.xml" }}
       - persist_to_workspace:
           root: ~/
           paths:
@@ -69,6 +77,13 @@ jobs:
     steps:
       - attach_workspace:
           at: ~/
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "pom.xml" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
 
       - run:
           name: Deploy the artifacts
