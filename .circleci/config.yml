@@ -17,6 +17,13 @@ workflows:
       - tests:
           requires:
             - build
+      - deploy:
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - master
 
 jobs:
   build:
@@ -53,3 +60,18 @@ jobs:
 
       - store_test_results:
           path: ~/junit
+
+  deploy:
+    machine: true
+
+    working_directory: ~/
+
+    steps:
+      - attach_workspace:
+          at: ~/
+
+      - run:
+          name: Deploy the artifacts
+          command: |
+            mvn -s .circleci.settings.xml -DskipTests deploy
+
