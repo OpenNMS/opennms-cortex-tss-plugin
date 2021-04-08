@@ -47,7 +47,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
     private CortexTSS cortexTss;
 
     @Before
-    public void setUp() throws StorageException {
+    public void setUp() throws Exception {
         cortexTss = new CortexTSS("http://localhost:9009/api/prom/push", "localhost:9095", "http://localhost:9009/prometheus/api/v1");
         super.setUp();
     }
@@ -59,7 +59,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
     /**
      * The cortex query api doesn't allow to query for raw data for a range.
-     * Therefore we need to adopt the test method.
+     * Therefore we need to adopt the test method and set an aggregation
      */
     @Override
     public void shouldGetSamplesForMetric() throws StorageException {
