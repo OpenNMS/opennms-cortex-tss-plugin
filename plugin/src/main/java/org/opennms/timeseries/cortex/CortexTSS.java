@@ -58,6 +58,7 @@ import org.xerial.snappy.Snappy;
 
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.google.common.base.Strings;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
@@ -74,6 +75,7 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import prometheus.PrometheusRemote;
+import prometheus.PrometheusTypes;
 
 /**
  * Time Series Storage integration for Cortex.
@@ -128,25 +130,49 @@ public class CortexTSS implements TimeSeriesStorage {
         this.readUrl = Objects.requireNonNull(readUrl);
         this.client = new OkHttpClient();
 
-        ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forTarget(ingressGrpcTarget)
-                .maxInboundMessageSize(10 * 1024 * 1024)
-                .usePlaintext();
-        this.channel = channelBuilder.build();
-        this.blockingStub = IngesterGrpc.newBlockingStub(channel);
+        if (Strings.isNullOrEmpty(ingressGrpcTarget)) {
+            channel = null;
+            blockingStub = null;
+        } else {
+            ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forTarget(ingressGrpcTarget)
+                    // FIXME: Should be tuneable
+                    .maxInboundMessageSize(10 * 1024 * 1024)
+                    .usePlaintext();
+            this.channel = channelBuilder.build();
+            this.blockingStub = IngesterGrpc.newBlockingStub(channel);
+        }
+        // FIXME: Cache size should be tuneable
         this.metricCache = CacheBuilder.newBuilder().maximumSize(1000).build();
     }
 
     @Override
     public void store(final List<Sample> samples) throws StorageException {
-        storeSamplesViagRPC(samples);
-    }
-
-    private void storeSamplesViagRPC(final List<Sample> samples) throws StorageException {
         final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
+        if (channel != null) {
+            storeSamplesViagRPC(samplesSorted);
+        } else {
+            storeSamplesViaHttp(samplesSorted);
+        }
+    }
+
+    private void storeSamplesViaHttp(final List<Sample> samples) throws StorageException {
+        PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
+        samples.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
+        PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
+        LOG.trace("Writing: {}", writeRequest);
+        try {
+            write(writeRequest);
+            samplesWritten.mark(samples.size());
+        } catch (IOException e) {
+            throw new StorageException(String.format("Failed to write %d samples.", samples.size()), e);
+        }
+    }
+
+    private void storeSamplesViagRPC(final List<Sample> samples) throws StorageException {
         Cortex.WriteRequest.Builder writeBuilder = Cortex.WriteRequest.newBuilder();
-        samplesSorted.forEach(s -> writeBuilder.addTimeseries(toCortexTimeSeries(s)));
+        samples.forEach(s -> writeBuilder.addTimeseries(toCortexTimeSeries(s)));
         Cortex.WriteRequest writeRequest = writeBuilder.build();
         LOG.trace("Writing: {}", writeRequest);
         try {
@@ -206,6 +232,29 @@ public class CortexTSS implements TimeSeriesStorage {
         // Add the sample timestamp & value
         builder.addSamples(Cortex.Sample.newBuilder()
                 .setTimestampMs(sample.getTime().toEpochMilli())
+                .setValue(sample.getValue()));
+        return builder;
+    }
+
+    private static PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
+        PrometheusTypes.TimeSeries.Builder builder = PrometheusTypes.TimeSeries.newBuilder();
+        // Convert all of the tags to labels
+        Stream.concat(sample.getMetric().getIntrinsicTags().stream(), sample.getMetric().getMetaTags().stream())
+                .forEach(tag -> {
+                    // Special handling for the metric name
+                    if (IntrinsicTagNames.name.equals(tag.getKey())) {
+                        builder.addLabels(PrometheusTypes.Label.newBuilder()
+                                .setName(METRIC_NAME_LABEL)
+                                .setValue(sanitizeMetricName(tag.getValue())));
+                    } else {
+                        builder.addLabels(PrometheusTypes.Label.newBuilder()
+                                .setName(sanitizeLabelName(tag.getKey()))
+                                .setValue(tag.getValue()));
+                    }
+                });
+        // Add the sample timestamp & value
+        builder.addSamples(PrometheusTypes.Sample.newBuilder()
+                .setTimestamp(sample.getTime().toEpochMilli())
                 .setValue(sample.getValue()));
         return builder;
     }
@@ -382,11 +431,13 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public void destroy() {
-        channel.shutdownNow();
-        try {
-            channel.awaitTermination(15, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            LOG.info("Interrupted while awaiting for channel to shutdown.");
+        if (channel != null) {
+            channel.shutdownNow();
+            try {
+                channel.awaitTermination(15, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                LOG.info("Interrupted while awaiting for channel to shutdown.");
+            }
         }
     }
 

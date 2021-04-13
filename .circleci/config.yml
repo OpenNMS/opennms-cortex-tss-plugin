@@ -21,7 +21,6 @@ workflows:
           context:
             - OSSRH Principal
           requires:
-            - build
             - tests
           filters:
             branches:
