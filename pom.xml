@@ -28,7 +28,7 @@
         <osgi.compendium.version>5.0.0</osgi.compendium.version>
         <protoc.version>3.12.0</protoc.version>
         <slf4j-api.version>1.7.30</slf4j-api.version>
-        <snappy.version>1.1.7.3</snappy.version>
+        <snappy.version>1.1.8.4</snappy.version>
     </properties>
 
     <modules>
