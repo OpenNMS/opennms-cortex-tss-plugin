@@ -338,9 +338,11 @@ public class CortexTSS implements TimeSeriesStorage {
         }
 
         // aggregation
-        query.insert(0,"(");
-        query.insert(0, toFunction(request.getAggregation()));
-        query.append(")");
+        if (Aggregation.NONE.equals(request.getAggregation())) {
+            query.insert(0,"(");
+            query.insert(0, toFunction(request.getAggregation()));
+            query.append(")");
+        }
 
         return query.toString();
     }
