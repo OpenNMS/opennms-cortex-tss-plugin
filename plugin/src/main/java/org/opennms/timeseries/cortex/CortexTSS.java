@@ -29,6 +29,7 @@
 package org.opennms.timeseries.cortex;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -38,6 +39,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -66,8 +68,12 @@ import com.google.protobuf.ByteString;
 
 import cortex.Cortex;
 import cortex.IngesterGrpc;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadConfig;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import okhttp3.Call;
+import okhttp3.Callback;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -125,6 +131,8 @@ public class CortexTSS implements TimeSeriesStorage {
     // when retrieving aggregated time series data we loose the metric information and thus take it from cache
     private final Cache<String, Metric> metricCache;
 
+    private final Bulkhead asyncHttpCallsBulkhead;
+
     public CortexTSS(String writeUrl, String ingressGrpcTarget, final String readUrl) {
         this.writeUrl = Objects.requireNonNull(writeUrl);
         this.readUrl = Objects.requireNonNull(readUrl);
@@ -143,6 +151,15 @@ public class CortexTSS implements TimeSeriesStorage {
         }
         // FIXME: Cache size should be tuneable
         this.metricCache = CacheBuilder.newBuilder().maximumSize(1000).build();
+
+        BulkheadConfig config = BulkheadConfig.custom()
+                // FIXME: Make tuneable
+                .maxConcurrentCalls(1000)
+                // FIXME: Make tuneable
+                .maxWaitDuration(Duration.ofMillis(Long.MAX_VALUE))
+                .fairCallHandlingStrategyEnabled(true)
+                .build();
+        asyncHttpCallsBulkhead = Bulkhead.of("asyncHttpCalls", config);
     }
 
     @Override
@@ -157,17 +174,19 @@ public class CortexTSS implements TimeSeriesStorage {
         }
     }
 
-    private void storeSamplesViaHttp(final List<Sample> samples) throws StorageException {
+    private void storeSamplesViaHttp(final List<Sample> samples) {
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
         samples.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
         PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
         LOG.trace("Writing: {}", writeRequest);
-        try {
-            write(writeRequest);
-            samplesWritten.mark(samples.size());
-        } catch (IOException e) {
-            throw new StorageException(String.format("Failed to write %d samples.", samples.size()), e);
-        }
+        asyncHttpCallsBulkhead.executeCompletionStage(() -> writeAsync(writeRequest)).whenComplete((r,ex) -> {
+            if (ex == null) {
+                samplesWritten.mark(samples.size());
+            } else {
+                // FIXME: Data loss
+                LOG.error("Error occurred while storing samples, sample will be lost.", ex);
+            }
+        });
     }
 
     private void storeSamplesViagRPC(final List<Sample> samples) throws StorageException {
@@ -183,34 +202,51 @@ public class CortexTSS implements TimeSeriesStorage {
         }
     }
 
-    public void write(PrometheusRemote.WriteRequest writeRequest) throws StorageException, IOException {
-        byte[] compressed = Snappy.compress(writeRequest.toByteArray());
-        RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, compressed);
-        Request request = new Request.Builder()
+    public CompletableFuture<Void> writeAsync(PrometheusRemote.WriteRequest writeRequest) {
+        final CompletableFuture<Void> future = new CompletableFuture<>();
+        final byte[] compressed;
+        try {
+            compressed = Snappy.compress(writeRequest.toByteArray());
+        } catch (IOException e) {
+            future.completeExceptionally(e);
+            return future;
+        }
+
+        final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, compressed);
+        final Request request = new Request.Builder()
                 .url(writeUrl)
                 .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
                 .addHeader("Content-Encoding", "snappy")
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
                 .post(body)
                 .build();
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new StorageException(String.format("Writing to Prometheus failed: %s - %s: %s",
-                        response.code(),
-                        response.message(), Optional
-                                .ofNullable(response.body())
-                                .map(this::readSilently)
-                                .orElse("null")));
-            }
-        }
-    }
 
-    private String readSilently(final ResponseBody responseBody) {
-        try {
-            return responseBody.string();
-        } catch (IOException ex) {
-            return "null";
-        }
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                future.completeExceptionally(e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                if (!response.isSuccessful()) {
+                    String bodyAsString;
+                    try(ResponseBody body = response.body()) {
+                        bodyAsString = body.string();
+                    } catch (IOException e) {
+                        bodyAsString = "(error reading body)";
+                    }
+
+                    future.completeExceptionally(new StorageException(String.format("Writing to Prometheus failed: %s - %s: %s",
+                            response.code(),
+                            response.message(),
+                            bodyAsString)));
+                } else {
+                    future.complete(null);
+                }
+            }
+        });
+        return future;
     }
 
     private static Cortex.TimeSeries.Builder toCortexTimeSeries(Sample sample) {

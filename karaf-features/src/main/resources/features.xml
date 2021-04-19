@@ -7,9 +7,11 @@
         <feature version="${opennms.api.version}" dependency="true">opennms-integration-api</feature>
         <feature version="${okhttp.version}" dependency="true">okhttp</feature>
         <feature version="${grpc.version}" dependency="true">grpc</feature>
+        <feature version="${resilience4j.version}" dependency="true">resilience4j</feature>
         <bundle dependency="true">mvn:com.google.protobuf/protobuf-java/${protoc.version}</bundle>
         <bundle dependency="true">mvn:org.xerial.snappy/snappy-java/${snappy.version}</bundle>
         <bundle dependency="true">mvn:io.dropwizard.metrics/metrics-core/${metrics.version}</bundle>
+        <bundle dependency="true">mvn:org.json/json/${json.version}</bundle>
         <bundle dependency="true">mvn:org.json/json/${json.version}</bundle>
         <bundle>mvn:org.opennms.plugins.timeseries/cortex-plugin/${project.version}</bundle>
     </feature>
@@ -29,6 +31,14 @@
         <feature version="${guava.version}" dependency="true">guava</feature>
         <bundle dependency="true">mvn:com.google.protobuf/protobuf-java/${protoc.version}</bundle>
         <bundle>mvn:org.opennms.plugin.timeseries.cortex.wrap/grpc/${project.version}</bundle>
+    </feature>
+
+    <feature name="resilience4j" description="resilience4j" version="${resilience4j.version}">
+        <bundle>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.jsr305/3.0.2_1</bundle>
+        <bundle dependency="true">mvn:io.github.resilience4j/resilience4j-core/${resilience4j.version}</bundle>
+        <bundle dependency="true">mvn:io.github.resilience4j/resilience4j-bulkhead/${resilience4j.version}</bundle>
+        <bundle dependency="true">mvn:io.vavr/vavr/0.10.2</bundle>
+        <bundle dependency="true">mvn:io.vavr/vavr-match/0.10.2</bundle>
     </feature>
 
 </features>

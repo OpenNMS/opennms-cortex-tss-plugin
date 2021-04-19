@@ -86,6 +86,7 @@
                                 <feature>okhttp</feature>
                                 <feature>grpc</feature>
                                 <feature>guava</feature>
+                                <feature>resilience4j</feature>
                             </features>
                         </configuration>
                     </execution>
