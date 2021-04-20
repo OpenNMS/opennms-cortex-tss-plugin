@@ -74,6 +74,7 @@ import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import okhttp3.Call;
 import okhttp3.Callback;
+import okhttp3.ConnectionPool;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -118,6 +119,9 @@ public class CortexTSS implements TimeSeriesStorage {
 
     final static int MAX_SAMPLES = 1200;
 
+    // FIXME: Make tuneable
+    final static int MAX_CONCURRENT_HTTP_CONNECTIONS = 100;
+
     private final OkHttpClient client;
     private final String writeUrl;
     private final String readUrl;
@@ -136,7 +140,13 @@ public class CortexTSS implements TimeSeriesStorage {
     public CortexTSS(String writeUrl, String ingressGrpcTarget, final String readUrl) {
         this.writeUrl = Objects.requireNonNull(writeUrl);
         this.readUrl = Objects.requireNonNull(readUrl);
-        this.client = new OkHttpClient();
+        ConnectionPool connectionPool = new ConnectionPool(MAX_CONCURRENT_HTTP_CONNECTIONS, 5, TimeUnit.MINUTES);
+        this.client = new OkHttpClient.Builder()
+                // FIXME: Max tuneable
+                .readTimeout(1000, TimeUnit.MILLISECONDS)
+                .writeTimeout(1000, TimeUnit.MILLISECONDS)
+                .connectionPool(connectionPool)
+                .build();
 
         if (Strings.isNullOrEmpty(ingressGrpcTarget)) {
             channel = null;
@@ -153,8 +163,7 @@ public class CortexTSS implements TimeSeriesStorage {
         this.metricCache = CacheBuilder.newBuilder().maximumSize(1000).build();
 
         BulkheadConfig config = BulkheadConfig.custom()
-                // FIXME: Make tuneable
-                .maxConcurrentCalls(1000)
+                .maxConcurrentCalls(MAX_CONCURRENT_HTTP_CONNECTIONS * 2)
                 // FIXME: Make tuneable
                 .maxWaitDuration(Duration.ofMillis(Long.MAX_VALUE))
                 .fairCallHandlingStrategyEnabled(true)
