@@ -7,7 +7,7 @@ volumes:
 
 services:
   cortex:
-    image: docker.io/cortexproject/cortex:v1.2.0-rc.1
+    image: docker.io/cortexproject/cortex:v1.8.0
     volumes:
       - "data-cortex:/tmp/cortex"
       - "./single-process-config.yaml:/etc/single-process-config.yaml"
@@ -17,7 +17,7 @@ services:
       - "9095:9095/tcp"
 
   grafana:
-    image: docker.io/grafana/grafana:6.7.2
+    image: docker.io/grafana/grafana:7.5.4
     hostname: grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: mypass

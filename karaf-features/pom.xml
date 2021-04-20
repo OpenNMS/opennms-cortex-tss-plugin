@@ -84,7 +84,6 @@
                             <features>
                                 <feature>opennms-plugins-cortex-tss</feature>
                                 <feature>okhttp</feature>
-                                <feature>grpc</feature>
                                 <feature>guava</feature>
                                 <feature>resilience4j</feature>
                             </features>
@@ -115,12 +114,6 @@
         <dependency>
              <groupId>org.opennms.plugins.timeseries</groupId>
              <artifactId>cortex-plugin</artifactId>
-            <version>${project.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.opennms.plugin.timeseries.cortex.wrap</groupId>
-            <artifactId>grpc</artifactId>
             <version>${project.version}</version>
             <scope>provided</scope>
         </dependency>
