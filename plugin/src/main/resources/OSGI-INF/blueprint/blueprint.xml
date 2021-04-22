@@ -10,12 +10,26 @@
         <cm:default-properties>
             <cm:property name="writeUrl" value="http://localhost:9009/api/prom/push" />
             <cm:property name="readUrl" value="http://localhost:9009/prometheus/api/v1" />
+            <cm:property name="maxConcurrentHttpConnections" value="100" />
+            <cm:property name="writeTimeoutInMs" value="1000" />
+            <cm:property name="readTimeoutInMs" value="1000" />
+            <cm:property name="metricCacheSize" value="1000" />
+            <cm:property name="bulkheadMaxWaitDuration" value="9223372036854775807" />
         </cm:default-properties>
     </cm:property-placeholder>
 
-    <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS">
+    <bean id="cortexTssConfig" class="org.opennms.timeseries.cortex.CortexTSSConfig">
         <argument value="${writeUrl}" />
         <argument value="${readUrl}" />
+        <argument value="${maxConcurrentHttpConnections}" />
+        <argument value="${writeTimeoutInMs}" />
+        <argument value="${readTimeoutInMs}" />
+        <argument value="${metricCacheSize}" />
+        <argument value="${bulkheadMaxWaitDuration}" />
+    </bean>
+
+    <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS" destroy-method="destroy">
+        <argument ref="cortexTssConfig" />
     </bean>
 
     <service ref="timeSeriesStorage" interface="org.opennms.timeseries.cortex.CortexTSS" />

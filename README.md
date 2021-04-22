@@ -39,8 +39,15 @@ feature:install opennms-plugins-cortex-tss
 Configure (you can omit that if you use the default values):
 ```
 config:edit org.opennms.plugins.tss.cortex
+
 property-set writeUrl http://localhost:9009/api/prom/push
 property-set readUrl http://localhost:9009/prometheus/api/v1
+property-set maxConcurrentHttpConnections 100
+property-set writeTimeoutInMs 1000
+property-set readTimeoutInMs 1000
+property-set metricCacheSize 1000
+property-set bulkheadMaxWaitDurationInMs Long.MAX_VALUE
+
 config:update
 ```
 

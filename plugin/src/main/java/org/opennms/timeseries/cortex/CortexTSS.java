@@ -116,12 +116,7 @@ public class CortexTSS implements TimeSeriesStorage {
 
     final static int MAX_SAMPLES = 1200;
 
-    // FIXME: Make tuneable
-    final static int MAX_CONCURRENT_HTTP_CONNECTIONS = 100;
-
     private final OkHttpClient client;
-    private final String writeUrl;
-    private final String readUrl;
 
     private final MetricRegistry metrics = new MetricRegistry();
     private final Meter samplesWritten = metrics.meter("samplesWritten");
@@ -132,33 +127,31 @@ public class CortexTSS implements TimeSeriesStorage {
 
     private final Bulkhead asyncHttpCallsBulkhead;
 
-    public CortexTSS(String writeUrl, final String readUrl) {
-        this.writeUrl = Objects.requireNonNull(writeUrl);
-        this.readUrl = Objects.requireNonNull(readUrl);
+    final CortexTSSConfig config;
 
-        ConnectionPool connectionPool = new ConnectionPool(MAX_CONCURRENT_HTTP_CONNECTIONS, 5, TimeUnit.MINUTES);
+    public CortexTSS(final CortexTSSConfig config) {
+        this.config = Objects.requireNonNull(config);
+        String ingressGrpcTarget = null; // TODO: Patrick remove me
+        ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
         Dispatcher dispatcher = new Dispatcher();
-        dispatcher.setMaxRequests(MAX_CONCURRENT_HTTP_CONNECTIONS);
-        dispatcher.setMaxRequestsPerHost(MAX_CONCURRENT_HTTP_CONNECTIONS);
+        dispatcher.setMaxRequests(config.getMaxConcurrentHttpConnections());
+        dispatcher.setMaxRequestsPerHost(config.getMaxConcurrentHttpConnections());
 
         this.client = new OkHttpClient.Builder()
-                // FIXME: Make tuneable
-                .readTimeout(1000, TimeUnit.MILLISECONDS)
-                .writeTimeout(1000, TimeUnit.MILLISECONDS)
+                .readTimeout(config.getReadTimeoutInMs(), TimeUnit.MILLISECONDS)
+                .writeTimeout(config.getWriteTimeoutInMs(), TimeUnit.MILLISECONDS)
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .build();
 
-        // FIXME: Cache size should be tuneable
-        this.metricCache = CacheBuilder.newBuilder().maximumSize(1000).build();
+        this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
 
-        BulkheadConfig config = BulkheadConfig.custom()
-                .maxConcurrentCalls(MAX_CONCURRENT_HTTP_CONNECTIONS * 2)
-                // FIXME: Make tuneable
-                .maxWaitDuration(Duration.ofMillis(Long.MAX_VALUE))
+        BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
+                .maxConcurrentCalls(config.getMaxConcurrentHttpConnections() * 2)
+                .maxWaitDuration(Duration.ofMillis(config.getBulkheadMaxWaitDurationInMs()))
                 .fairCallHandlingStrategyEnabled(true)
                 .build();
-        asyncHttpCallsBulkhead = Bulkhead.of("asyncHttpCalls", config);
+        asyncHttpCallsBulkhead = Bulkhead.of("asyncHttpCalls", bulkheadConfig);
 
         // Expose HTTP client statistics
         metrics.register("connectionCount", (Gauge<Integer>) () -> client.connectionPool().connectionCount());
@@ -203,7 +196,7 @@ public class CortexTSS implements TimeSeriesStorage {
 
         final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, compressed);
         final Request request = new Request.Builder()
-                .url(writeUrl)
+                .url(config.getWriteUrl())
                 .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
                 .addHeader("Content-Encoding", "snappy")
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
@@ -273,7 +266,7 @@ public class CortexTSS implements TimeSeriesStorage {
     public List<Metric> getMetrics(Collection<Tag> tags) throws StorageException {
         LOG.info("Retrieving metrics for tags: {}", tags);
         String url = String.format("%s/series?match[]={%s}",
-                readUrl,
+                config.getReadUrl(),
                 tagsToQuery(tags));
         String json = makeCallToQueryApi(url);
         List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json);
@@ -307,7 +300,7 @@ public class CortexTSS implements TimeSeriesStorage {
 
         String query = createQuery(request, metric.get());
         String url = String.format("%s/query_range?query=%s&start=%s&end=%s&step=%ss",
-                readUrl,
+                config.getReadUrl(),
                 query,
                 request.getStart().getEpochSecond(),
                 request.getEnd().getEpochSecond(),

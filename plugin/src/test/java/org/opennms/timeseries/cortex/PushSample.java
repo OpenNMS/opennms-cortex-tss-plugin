@@ -16,7 +16,7 @@ import org.opennms.integration.api.v1.timeseries.immutables.ImmutableSample;
 public class PushSample {
     public static void main(String[] args) throws StorageException {
         Random random = new Random(42);
-        CortexTSS cortexTss = new CortexTSS("http://localhost:9009/api/prom/push", "http://localhost:9009/prometheus/api/v1");
+        CortexTSS cortexTss = new CortexTSS(CortexTSSConfig.builder().build());
         Metric metric = ImmutableMetric.builder()
                 .intrinsicTag(IntrinsicTagNames.resourceId, "response:127.0.0.1:icmp")
                 .intrinsicTag(IntrinsicTagNames.name, "icmp")
