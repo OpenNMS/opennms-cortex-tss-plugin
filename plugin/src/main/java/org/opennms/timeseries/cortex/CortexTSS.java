@@ -58,6 +58,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xerial.snappy.Snappy;
 
+import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.base.Strings;
@@ -129,6 +130,7 @@ public class CortexTSS implements TimeSeriesStorage {
 
     private final MetricRegistry metrics = new MetricRegistry();
     private final Meter samplesWritten = metrics.meter("samplesWritten");
+    private final Meter samplesLost = metrics.meter("samplesLost");
 
     private final ManagedChannel channel;
     private final IngesterGrpc.IngesterBlockingStub blockingStub;
@@ -176,6 +178,14 @@ public class CortexTSS implements TimeSeriesStorage {
                 .fairCallHandlingStrategyEnabled(true)
                 .build();
         asyncHttpCallsBulkhead = Bulkhead.of("asyncHttpCalls", config);
+
+        // Expose HTTP client statistics
+        metrics.register("connectionCount", (Gauge<Integer>) () -> client.connectionPool().connectionCount());
+        metrics.register("idleConnectionCount", (Gauge<Integer>) () -> client.connectionPool().idleConnectionCount());
+        metrics.register("queuedCallsCount", (Gauge<Integer>) () -> client.dispatcher().queuedCallsCount());
+        metrics.register("runningCallsCount", (Gauge<Integer>) () -> client.dispatcher().runningCallsCount());
+        metrics.register("availableConcurrentCalls", (Gauge<Integer>) () -> asyncHttpCallsBulkhead.getMetrics().getAvailableConcurrentCalls());
+        metrics.register("maxAllowedConcurrentCalls", (Gauge<Integer>) () -> asyncHttpCallsBulkhead.getMetrics().getMaxAllowedConcurrentCalls());
     }
 
     @Override
@@ -200,6 +210,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 samplesWritten.mark(samples.size());
             } else {
                 // FIXME: Data loss
+                samplesLost.mark(samples.size());
                 LOG.error("Error occurred while storing samples, sample will be lost.", ex);
             }
         });
