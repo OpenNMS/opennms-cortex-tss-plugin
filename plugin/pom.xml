@@ -26,6 +26,11 @@
                 <configuration>
                     <instructions>
                         <Karaf-Commands>*</Karaf-Commands>
+                        <Import-Package>
+                            <!-- The version of this package is not picked up automatically, so we set it here. -->
+                            io.github.resilience4j.bulkhead;version="${resilience4j.version}",
+                            *
+                        </Import-Package>
                         <!-- Nothing to export -->
                         <Export-Package></Export-Package>
                     </instructions>
