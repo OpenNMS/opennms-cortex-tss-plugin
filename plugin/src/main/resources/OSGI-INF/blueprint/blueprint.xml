@@ -13,7 +13,7 @@
         </cm:default-properties>
     </cm:property-placeholder>
 
-    <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS" destroy-method="destroy">
+    <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS">
         <argument value="${writeUrl}" />
         <argument value="${readUrl}" />
     </bean>

@@ -4,10 +4,10 @@
     <feature name="opennms-plugins-cortex-tss" description="OpenNMS :: Plugins :: Cortex TSS" version="${project.version}">
         <feature dependency="true">aries-blueprint</feature>
         <feature dependency="true">shell</feature>
-        <feature dependency="true">guava</feature>
+        <feature dependency="true">tts-cortex-guava</feature>
         <feature version="${opennms.api.version}" dependency="true">opennms-integration-api</feature>
-        <feature version="${okhttp.version}" dependency="true">okhttp</feature>
-        <feature version="${resilience4j.version}" dependency="true">resilience4j</feature>
+        <feature version="${okhttp.version}" dependency="true">tts-cortex-okhttp</feature>
+        <feature version="${resilience4j.version}" dependency="true">tts-cortex-resilience4j</feature>
         <bundle dependency="true">mvn:com.google.protobuf/protobuf-java/${protoc.version}</bundle>
         <bundle dependency="true">mvn:org.xerial.snappy/snappy-java/${snappy.version}</bundle>
         <bundle dependency="true">mvn:io.dropwizard.metrics/metrics-core/${metrics.version}</bundle>
@@ -16,18 +16,18 @@
         <bundle>mvn:org.opennms.plugins.timeseries/cortex-plugin/${project.version}</bundle>
     </feature>
 
-    <feature name="okhttp" description="okhttp" version="${okhttp.version}">
+    <feature name="tts-cortex-okhttp" description="okhttp" version="${okhttp.version}">
         <bundle dependency='true'>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okio/${okio.bundle.version}</bundle>
         <bundle dependency="true">mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okhttp/${okhttp.bundle.version}</bundle>
         <bundle dependency="true">wrap:mvn:com.squareup.okhttp3/logging-interceptor/${okhttp.version}</bundle>
     </feature>
 
-    <feature name="guava" description="guava" version="${guava.version}">
+    <feature name="tts-cortex-guava" description="guava" version="${guava.version}">
         <bundle dependency="true">mvn:com.google.guava/guava/${guava.version}</bundle>
         <bundle dependency="true">mvn:com.google.guava/failureaccess/1.0.1</bundle>
     </feature>
 
-    <feature name="resilience4j" description="resilience4j" version="${resilience4j.version}">
+    <feature name="tts-cortex-resilience4j" description="resilience4j" version="${resilience4j.version}">
         <bundle>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.jsr305/3.0.2_1</bundle>
         <bundle dependency="true">mvn:io.github.resilience4j/resilience4j-core/${resilience4j.version}</bundle>
         <bundle dependency="true">mvn:io.github.resilience4j/resilience4j-bulkhead/${resilience4j.version}</bundle>

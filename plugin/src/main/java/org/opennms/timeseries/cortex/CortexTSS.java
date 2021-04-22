@@ -423,6 +423,9 @@ public class CortexTSS implements TimeSeriesStorage {
 
     }
 
+    public void destroy() {
+    }
+
     public MetricRegistry getMetrics() {
         return metrics;
     }

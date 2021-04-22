@@ -83,9 +83,9 @@
                             </framework>
                             <features>
                                 <feature>opennms-plugins-cortex-tss</feature>
-                                <feature>okhttp</feature>
-                                <feature>guava</feature>
-                                <feature>resilience4j</feature>
+                                <feature>tts-cortex-okhttp</feature>
+                                <feature>tts-cortex-guava</feature>
+                                <feature>tts-cortex-resilience4j</feature>
                             </features>
                         </configuration>
                     </execution>
