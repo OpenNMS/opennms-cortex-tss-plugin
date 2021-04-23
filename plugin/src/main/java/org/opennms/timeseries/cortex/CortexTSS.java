@@ -168,8 +168,15 @@ public class CortexTSS implements TimeSeriesStorage {
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
         samplesSorted.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
         PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
+        final byte[] writeRequestCompressed;
+        try {
+            writeRequestCompressed = Snappy.compress(writeRequest.toByteArray());
+        } catch (IOException e) {
+            throw new StorageException(e);
+        }
+
         LOG.trace("Writing: {}", writeRequest);
-        asyncHttpCallsBulkhead.executeCompletionStage(() -> writeAsync(writeRequest)).whenComplete((r,ex) -> {
+        asyncHttpCallsBulkhead.executeCompletionStage(() -> writeAsync(writeRequestCompressed)).whenComplete((r,ex) -> {
             if (ex == null) {
                 samplesWritten.mark(samplesSorted.size());
             } else {
@@ -180,17 +187,10 @@ public class CortexTSS implements TimeSeriesStorage {
         });
     }
 
-    public CompletableFuture<Void> writeAsync(PrometheusRemote.WriteRequest writeRequest) {
+    public CompletableFuture<Void> writeAsync(byte[] writeRequestBytes) {
         final CompletableFuture<Void> future = new CompletableFuture<>();
-        final byte[] compressed;
-        try {
-            compressed = Snappy.compress(writeRequest.toByteArray());
-        } catch (IOException e) {
-            future.completeExceptionally(e);
-            return future;
-        }
 
-        final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, compressed);
+        final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, writeRequestBytes);
         final Request request = new Request.Builder()
                 .url(config.getWriteUrl())
                 .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
