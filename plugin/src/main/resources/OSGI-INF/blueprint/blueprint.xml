@@ -9,14 +9,12 @@
     <cm:property-placeholder id="prometheusPluginProperties" persistent-id="org.opennms.plugins.tss.cortex" update-strategy="reload">
         <cm:default-properties>
             <cm:property name="writeUrl" value="http://localhost:9009/api/prom/push" />
-            <cm:property name="ingressGrpcTarget" value="localhost:9095" />
             <cm:property name="readUrl" value="http://localhost:9009/prometheus/api/v1" />
         </cm:default-properties>
     </cm:property-placeholder>
 
-    <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS" destroy-method="destroy">
+    <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS">
         <argument value="${writeUrl}" />
-        <argument value="${ingressGrpcTarget}" />
         <argument value="${readUrl}" />
     </bean>
 

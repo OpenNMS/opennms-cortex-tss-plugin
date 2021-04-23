@@ -4,10 +4,10 @@
     <feature name="opennms-plugins-cortex-tss" description="OpenNMS :: Plugins :: Cortex TSS" version="${project.version}">
         <feature dependency="true">aries-blueprint</feature>
         <feature dependency="true">shell</feature>
+        <feature dependency="true">tss-cortex-guava</feature>
         <feature version="${opennms.api.version}" dependency="true">opennms-integration-api</feature>
-        <feature version="${okhttp.version}" dependency="true">okhttp</feature>
-        <feature version="${grpc.version}" dependency="true">grpc</feature>
-        <feature version="${resilience4j.version}" dependency="true">resilience4j</feature>
+        <feature version="${okhttp.version}" dependency="true">tss-cortex-okhttp</feature>
+        <feature version="${resilience4j.version}" dependency="true">tss-cortex-resilience4j</feature>
         <bundle dependency="true">mvn:com.google.protobuf/protobuf-java/${protoc.version}</bundle>
         <bundle dependency="true">mvn:org.xerial.snappy/snappy-java/${snappy.version}</bundle>
         <bundle dependency="true">mvn:io.dropwizard.metrics/metrics-core/${metrics.version}</bundle>
@@ -16,28 +16,22 @@
         <bundle>mvn:org.opennms.plugins.timeseries/cortex-plugin/${project.version}</bundle>
     </feature>
 
-    <feature name="okhttp" description="okhttp" version="${okhttp.version}">
+    <feature name="tss-cortex-okhttp" description="okhttp" version="${okhttp.version}">
         <bundle dependency='true'>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okio/${okio.bundle.version}</bundle>
         <bundle dependency="true">mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okhttp/${okhttp.bundle.version}</bundle>
         <bundle dependency="true">wrap:mvn:com.squareup.okhttp3/logging-interceptor/${okhttp.version}</bundle>
     </feature>
 
-    <feature name="guava" description="guava" version="${guava.version}">
+    <feature name="tss-cortex-guava" description="guava" version="${guava.version}">
         <bundle dependency="true">mvn:com.google.guava/guava/${guava.version}</bundle>
         <bundle dependency="true">mvn:com.google.guava/failureaccess/1.0.1</bundle>
     </feature>
 
-    <feature name="grpc" description="gRPC" version="${grpc.version}">
-        <feature version="${guava.version}" dependency="true">guava</feature>
-        <bundle dependency="true">mvn:com.google.protobuf/protobuf-java/${protoc.version}</bundle>
-        <bundle>mvn:org.opennms.plugin.timeseries.cortex.wrap/grpc/${project.version}</bundle>
-    </feature>
-
-    <feature name="resilience4j" description="resilience4j" version="${resilience4j.version}">
+    <feature name="tss-cortex-resilience4j" description="resilience4j" version="${resilience4j.version}">
         <bundle>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.jsr305/3.0.2_1</bundle>
-        <bundle dependency="true">mvn:io.github.resilience4j/resilience4j-core/${resilience4j.version}</bundle>
-        <bundle dependency="true">mvn:io.github.resilience4j/resilience4j-bulkhead/${resilience4j.version}</bundle>
-        <bundle dependency="true">mvn:io.vavr/vavr/0.10.2</bundle>
+        <bundle dependency="true">wrap:mvn:io.github.resilience4j/resilience4j-core/${resilience4j.version}$overwrite=merge&amp;Export-Package=io.github.resilience4j.core;version=${resilience4j.version},io.github.resilience4j.core.exception;version=${resilience4j.version},io.github.resilience4j.core.functions;version=${resilience4j.version},io.github.resilience4j.core.lang;version=${resilience4j.version},io.github.resilience4j.core.metrics;version=${resilience4j.version},io.github.resilience4j.core.predicate;version=${resilience4j.version},io.github.resilience4j.core.registry;version=${resilience4j.version}&amp;Import-Package=io.vavr;version=0.10.2,io.vavr.collection;version=0.10.2,io.vavr.control;version=0.10.2</bundle>
+        <bundle dependency="true">wrap:mvn:io.github.resilience4j/resilience4j-bulkhead/${resilience4j.version}$overwrite=merge&amp;Export-Package=io.github.resilience4j.bulkhead;version=${resilience4j.version},io.github.resilience4j.bulkhead.event;version=${resilience4j.version},io.github.resilience4j.bulkhead.utils;version=${resilience4j.version}&amp;Import-Package=io.github.resilience4j.core;version=${resilience4j.version},io.github.resilience4j.core.exception;version=${resilience4j.version},io.github.resilience4j.core.functions;version=${resilience4j.version},io.github.resilience4j.core.lang;version=${resilience4j.version},io.github.resilience4j.core.registry;version=${resilience4j.version},io.vavr;version=0.10.2,io.vavr.collection;version=0.10.2,io.vavr.control;version=0.10.2</bundle>
+        <bundle dependency="true">wrap:mvn:io.vavr/vavr/0.10.2$overwrite=merge&amp;Export-Package=io.vavr;version=0.10.2,io.vavr.collection;version=0.10.2,io.vavr.concurrent;version=0.10.2,io.vavr.control;version=0.10.2</bundle>
         <bundle dependency="true">mvn:io.vavr/vavr-match/0.10.2</bundle>
     </feature>
 

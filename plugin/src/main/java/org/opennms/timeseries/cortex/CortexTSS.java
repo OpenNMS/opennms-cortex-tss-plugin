@@ -61,18 +61,13 @@ import org.xerial.snappy.Snappy;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
-import com.google.common.base.Strings;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
 import com.google.protobuf.ByteString;
 
-import cortex.Cortex;
-import cortex.IngesterGrpc;
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadConfig;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.ConnectionPool;
@@ -132,15 +127,12 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Meter samplesWritten = metrics.meter("samplesWritten");
     private final Meter samplesLost = metrics.meter("samplesLost");
 
-    private final ManagedChannel channel;
-    private final IngesterGrpc.IngesterBlockingStub blockingStub;
-
     // when retrieving aggregated time series data we loose the metric information and thus take it from cache
     private final Cache<String, Metric> metricCache;
 
     private final Bulkhead asyncHttpCallsBulkhead;
 
-    public CortexTSS(String writeUrl, String ingressGrpcTarget, final String readUrl) {
+    public CortexTSS(String writeUrl, final String readUrl) {
         this.writeUrl = Objects.requireNonNull(writeUrl);
         this.readUrl = Objects.requireNonNull(readUrl);
 
@@ -157,17 +149,6 @@ public class CortexTSS implements TimeSeriesStorage {
                 .connectionPool(connectionPool)
                 .build();
 
-        if (Strings.isNullOrEmpty(ingressGrpcTarget)) {
-            channel = null;
-            blockingStub = null;
-        } else {
-            ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forTarget(ingressGrpcTarget)
-                    // FIXME: Should be tuneable
-                    .maxInboundMessageSize(10 * 1024 * 1024)
-                    .usePlaintext();
-            this.channel = channelBuilder.build();
-            this.blockingStub = IngesterGrpc.newBlockingStub(channel);
-        }
         // FIXME: Cache size should be tuneable
         this.metricCache = CacheBuilder.newBuilder().maximumSize(1000).build();
 
@@ -193,40 +174,21 @@ public class CortexTSS implements TimeSeriesStorage {
         final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
-        if (channel != null) {
-            storeSamplesViagRPC(samplesSorted);
-        } else {
-            storeSamplesViaHttp(samplesSorted);
-        }
-    }
 
-    private void storeSamplesViaHttp(final List<Sample> samples) {
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
-        samples.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
+        samplesSorted.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
         PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
         LOG.trace("Writing: {}", writeRequest);
         asyncHttpCallsBulkhead.executeCompletionStage(() -> writeAsync(writeRequest)).whenComplete((r,ex) -> {
             if (ex == null) {
-                samplesWritten.mark(samples.size());
+                samplesWritten.mark(samplesSorted.size());
             } else {
                 // FIXME: Data loss
                 samplesLost.mark(samples.size());
                 LOG.error("Error occurred while storing samples, sample will be lost.", ex);
             }
         });
-    }
 
-    private void storeSamplesViagRPC(final List<Sample> samples) throws StorageException {
-        Cortex.WriteRequest.Builder writeBuilder = Cortex.WriteRequest.newBuilder();
-        samples.forEach(s -> writeBuilder.addTimeseries(toCortexTimeSeries(s)));
-        Cortex.WriteRequest writeRequest = writeBuilder.build();
-        LOG.trace("Writing: {}", writeRequest);
-        try {
-            blockingStub.push(writeRequest);
-            samplesWritten.mark(samples.size());
-        } catch (Exception e) {
-            throw new StorageException(String.format("Failed to write %d samples.", samples.size()), e);
-        }
     }
 
     public CompletableFuture<Void> writeAsync(PrometheusRemote.WriteRequest writeRequest) {
@@ -274,29 +236,6 @@ public class CortexTSS implements TimeSeriesStorage {
             }
         });
         return future;
-    }
-
-    private static Cortex.TimeSeries.Builder toCortexTimeSeries(Sample sample) {
-        Cortex.TimeSeries.Builder builder = Cortex.TimeSeries.newBuilder();
-        // Convert all of the tags to labels
-        Stream.concat(sample.getMetric().getIntrinsicTags().stream(), sample.getMetric().getMetaTags().stream())
-                .forEach(tag -> {
-                    // Special handling for the metric name
-                    if (IntrinsicTagNames.name.equals(tag.getKey())) {
-                        builder.addLabels(Cortex.LabelPair.newBuilder()
-                                .setName(ByteString.copyFromUtf8(METRIC_NAME_LABEL))
-                                .setValue(ByteString.copyFromUtf8(sanitizeMetricName(tag.getValue()))));
-                    } else {
-                        builder.addLabels(Cortex.LabelPair.newBuilder()
-                                .setName(ByteString.copyFromUtf8(sanitizeLabelName(tag.getKey())))
-                                .setValue(ByteString.copyFromUtf8(tag.getValue())));
-                    }
-                });
-        // Add the sample timestamp & value
-        builder.addSamples(Cortex.Sample.newBuilder()
-                .setTimestampMs(sample.getTime().toEpochMilli())
-                .setValue(sample.getValue()));
-        return builder;
     }
 
     private static PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
@@ -496,14 +435,6 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public void destroy() {
-        if (channel != null) {
-            channel.shutdownNow();
-            try {
-                channel.awaitTermination(15, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                LOG.info("Interrupted while awaiting for channel to shutdown.");
-            }
-        }
     }
 
     public MetricRegistry getMetrics() {

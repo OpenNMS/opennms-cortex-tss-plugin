@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Ignore;
@@ -41,14 +40,13 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
     @ClassRule
     public static DockerComposeContainer<?> environment = new DockerComposeContainer<>(new File("src/test/resources/org/opennms/timeseries/cortex/docker-compose.yaml"))
                 .withExposedService("cortex", 9009, Wait.forListeningPort().withStartupTimeout(Duration.ofSeconds(10)))
-                .withExposedService("cortex", 9095, Wait.forListeningPort().withStartupTimeout(Duration.ofSeconds(10)))
                 .withExposedService("grafana", 3000, Wait.forListeningPort().withStartupTimeout(Duration.ofSeconds(10)));
 
     private CortexTSS cortexTss;
 
     @Before
     public void setUp() throws Exception {
-        cortexTss = new CortexTSS("http://localhost:9009/api/prom/push", "localhost:9095", "http://localhost:9009/prometheus/api/v1");
+        cortexTss = new CortexTSS("http://localhost:9009/api/prom/push", "http://localhost:9009/prometheus/api/v1");
         super.setUp();
     }
 
@@ -87,11 +85,10 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
     }
 
     @Test
-    public void shouldGetSamplesForLongDuration() throws StorageException {
-        ImmutableMetric.MetricBuilder builder = ImmutableMetric.builder();
-        this.metrics.get(0).getIntrinsicTags().forEach(builder::intrinsicTag);
-        Metric metric = builder
-                .intrinsicTag(IntrinsicTagNames.name, UUID.randomUUID().toString())
+    public void shouldGetSamplesForLongDuration() throws StorageException, InterruptedException {
+        final Metric metric = ImmutableMetric.builder()
+                .intrinsicTag(this.metrics.get(0).getFirstTagByKey(IntrinsicTagNames.resourceId))
+                .intrinsicTag(IntrinsicTagNames.name, "n" + UUID.randomUUID().toString().replaceAll("-", ""))
                 .metaTag(MetaTagNames.mtype, Metric.Mtype.counter.name())
                 .build();
         Instant startTime = this.referenceTime.minus(90, ChronoUnit.DAYS);
@@ -108,6 +105,8 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
             time = time.plus(1, ChronoUnit.HOURS);
         }
         storage.store(originalSamples);
+        // The writes are async. Therefore we need to wait a bit before reading...
+        Thread.sleep(10000);
 
         TimeSeriesFetchRequest request = ImmutableTimeSeriesFetchRequest.builder()
                 .start(startTime)
@@ -149,9 +148,9 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
     @Ignore // not yet implemented
     public void shouldDeleteMetrics() { }
 
-
-    @After
-    public void tearDown() {
-        cortexTss.destroy();
+    @Override
+    protected void waitForPersistingChanges() throws Exception {
+        // The writes are async. Therefore we need to wait a bit before reading...
+        Thread.sleep(1000);
     }
 }
