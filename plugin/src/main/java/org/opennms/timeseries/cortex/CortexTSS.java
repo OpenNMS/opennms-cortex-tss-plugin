@@ -124,10 +124,8 @@ public class CortexTSS implements TimeSeriesStorage {
 
     // when retrieving aggregated time series data we loose the metric information and thus take it from cache
     private final Cache<String, Metric> metricCache;
-
     private final Bulkhead asyncHttpCallsBulkhead;
-
-    final CortexTSSConfig config;
+    private final CortexTSSConfig config;
 
     public CortexTSS(final CortexTSSConfig config) {
         this.config = Objects.requireNonNull(config);

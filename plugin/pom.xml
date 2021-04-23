@@ -132,7 +132,6 @@
             <artifactId>resilience4j-bulkhead</artifactId>
         </dependency>
 
-
         <!-- Test -->
         <dependency>
             <groupId>junit</groupId>
