@@ -1,6 +1,7 @@
 package org.opennms.timeseries.cortex;
 
 import java.util.Objects;
+import java.util.StringJoiner;
 
 public class CortexTSSConfig {
     private final String writeUrl;
@@ -124,5 +125,18 @@ public class CortexTSSConfig {
         public CortexTSSConfig build() {
             return new CortexTSSConfig(this);
         }
+    }
+
+    @Override
+    public String toString() {
+        return new StringJoiner(", ", CortexTSSConfig.class.getSimpleName() + "[", "]")
+                .add("writeUrl='" + writeUrl + "'")
+                .add("readUrl='" + readUrl + "'")
+                .add("maxConcurrentHttpConnections=" + maxConcurrentHttpConnections)
+                .add("writeTimeoutInMs=" + writeTimeoutInMs)
+                .add("readTimeoutInMs=" + readTimeoutInMs)
+                .add("metricCacheSize=" + metricCacheSize)
+                .add("bulkheadMaxWaitDurationInMs=" + bulkheadMaxWaitDurationInMs)
+                .toString();
     }
 }
