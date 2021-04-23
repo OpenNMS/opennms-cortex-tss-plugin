@@ -129,7 +129,6 @@ public class CortexTSS implements TimeSeriesStorage {
 
     public CortexTSS(final CortexTSSConfig config) {
         this.config = Objects.requireNonNull(config);
-        String ingressGrpcTarget = null; // TODO: Patrick remove me
         ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
         Dispatcher dispatcher = new Dispatcher();
         dispatcher.setMaxRequests(config.getMaxConcurrentHttpConnections());
