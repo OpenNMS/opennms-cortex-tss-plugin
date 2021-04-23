@@ -144,7 +144,7 @@ public class CortexTSS implements TimeSeriesStorage {
         this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
 
         BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
-                .maxConcurrentCalls(config.getMaxConcurrentHttpConnections() * 2)
+                .maxConcurrentCalls(config.getMaxConcurrentHttpConnections() * 6)
                 .maxWaitDuration(Duration.ofMillis(config.getBulkheadMaxWaitDurationInMs()))
                 .fairCallHandlingStrategyEnabled(true)
                 .build();
@@ -178,7 +178,6 @@ public class CortexTSS implements TimeSeriesStorage {
                 LOG.error("Error occurred while storing samples, sample will be lost.", ex);
             }
         });
-
     }
 
     public CompletableFuture<Void> writeAsync(PrometheusRemote.WriteRequest writeRequest) {
