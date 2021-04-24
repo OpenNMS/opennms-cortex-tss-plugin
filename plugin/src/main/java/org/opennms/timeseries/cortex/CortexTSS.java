@@ -168,6 +168,8 @@ public class CortexTSS implements TimeSeriesStorage {
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
         samplesSorted.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
         PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
+
+        // Compress the write request using Snappy
         final byte[] writeRequestCompressed;
         try {
             writeRequestCompressed = Snappy.compress(writeRequest.toByteArray());
@@ -175,8 +177,18 @@ public class CortexTSS implements TimeSeriesStorage {
             throw new StorageException(e);
         }
 
+        // Build the HTTP request
+        final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, writeRequestCompressed);
+        final Request request = new Request.Builder()
+                .url(config.getWriteUrl())
+                .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
+                .addHeader("Content-Encoding", "snappy")
+                .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
+                .post(body)
+                .build();
+
         LOG.trace("Writing: {}", writeRequest);
-        asyncHttpCallsBulkhead.executeCompletionStage(() -> writeAsync(writeRequestCompressed)).whenComplete((r,ex) -> {
+        asyncHttpCallsBulkhead.executeCompletionStage(() -> executeAsync(request)).whenComplete((r,ex) -> {
             if (ex == null) {
                 samplesWritten.mark(samplesSorted.size());
             } else {
@@ -187,18 +199,8 @@ public class CortexTSS implements TimeSeriesStorage {
         });
     }
 
-    public CompletableFuture<Void> writeAsync(byte[] writeRequestBytes) {
+    public CompletableFuture<Void> executeAsync(Request request) {
         final CompletableFuture<Void> future = new CompletableFuture<>();
-
-        final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, writeRequestBytes);
-        final Request request = new Request.Builder()
-                .url(config.getWriteUrl())
-                .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
-                .addHeader("Content-Encoding", "snappy")
-                .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
-                .post(body)
-                .build();
-
         client.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
