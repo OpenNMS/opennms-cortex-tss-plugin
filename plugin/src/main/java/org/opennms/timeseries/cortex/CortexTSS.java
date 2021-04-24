@@ -253,11 +253,56 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public static String sanitizeMetricName(String metricName) {
-        return SANITIZE_METRIC_NAME_PATTERN.matcher(metricName).replaceAll("_");
+        /**
+         * From vendor/github.com/prometheus/common/model/metric.go:
+         * func IsValidMetricName(n LabelValue) bool {
+         *         if len(n) == 0 {
+         *                 return false
+         *         }
+         *         for i, b := range n {
+         *                 if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || b == ':' || (b >= '0' && b <= '9' && i > 0)) {
+         *                         return false
+         *                 }
+         *         }
+         *         return true
+         */
+        StringBuilder sb = new StringBuilder();
+        for (int i=0; i < metricName.length(); i++) {
+            char b = metricName.charAt(i);
+            if (!((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || b == ':' || (b >= '0' && b <= '9' && i > 0))) {
+                sb.append("_");
+            } else {
+                sb.append(b);
+            }
+        }
+        return sb.toString();
     }
 
     public static String sanitizeLabelName(String labelName) {
-        return SANITIZE_LABEL_NAME_PATTERN.matcher(labelName).replaceAll("_");
+        /*
+         * From vendor/github.com/prometheus/common/model/labels.go
+         * func (ln LabelName) IsValid() bool {
+            if len(ln) == 0 {
+                return false
+            }
+            for i, b := range ln {
+                if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || (b >= '0' && b <= '9' && i > 0)) {
+                    return false
+                }
+            }
+            return true
+           }
+         */
+        StringBuilder sb = new StringBuilder();
+        for (int i=0; i < labelName.length(); i++) {
+            char b = labelName.charAt(i);
+            if (!((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || (b >= '0' && b <= '9' && i > 0))) {
+                sb.append("_");
+            } else {
+                sb.append(b);
+            }
+        }
+        return sb.toString();
     }
 
     @Override
