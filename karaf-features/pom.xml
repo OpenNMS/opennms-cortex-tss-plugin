@@ -85,7 +85,6 @@
                                 <feature>opennms-plugins-cortex-tss</feature>
                                 <feature>tss-cortex-okhttp</feature>
                                 <feature>tss-cortex-guava</feature>
-                                <feature>tss-cortex-resilience4j</feature>
                             </features>
                         </configuration>
                     </execution>

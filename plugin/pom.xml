@@ -26,11 +26,6 @@
                 <configuration>
                     <instructions>
                         <Karaf-Commands>*</Karaf-Commands>
-                        <Import-Package>
-                            <!-- The version of this package is not picked up automatically, so we set it here. -->
-                            io.github.resilience4j.bulkhead;version="${resilience4j.version}",
-                            *
-                        </Import-Package>
                         <!-- Nothing to export -->
                         <Export-Package></Export-Package>
                     </instructions>
@@ -128,8 +123,15 @@
             <artifactId>json</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-bulkhead</artifactId>
+            <groupId>org.opennms.plugin.timeseries.cortex.wrap</groupId>
+            <artifactId>resilience4j</artifactId>
+            <version>${project.version}</version>
+            <exclusions>
+                <exclusion>
+                    <artifactId>*</artifactId>
+                    <groupId>*</groupId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Test -->

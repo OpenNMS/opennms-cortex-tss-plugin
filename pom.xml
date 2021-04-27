@@ -36,6 +36,7 @@
         <module>assembly</module>
         <module>plugin</module>
         <module>karaf-features</module>
+        <module>wrap</module>
     </modules>
 
     <dependencyManagement>

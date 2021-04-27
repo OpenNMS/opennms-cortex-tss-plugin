@@ -1,8 +1,8 @@
 /*******************************************************************************
  * This file is part of OpenNMS(R).
  *
- * Copyright (C) 2020 The OpenNMS Group, Inc.
- * OpenNMS(R) is Copyright (C) 1999-2020 The OpenNMS Group, Inc.
+ * Copyright (C) 2021 The OpenNMS Group, Inc.
+ * OpenNMS(R) is Copyright (C) 1999-2021 The OpenNMS Group, Inc.
  *
  * OpenNMS(R) is a registered trademark of The OpenNMS Group, Inc.
  *
@@ -66,8 +66,8 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
 import com.google.protobuf.ByteString;
 
-import io.github.resilience4j.bulkhead.Bulkhead;
-import io.github.resilience4j.bulkhead.BulkheadConfig;
+import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.Bulkhead;
+import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.BulkheadConfig;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.ConnectionPool;
@@ -253,19 +253,8 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public static String sanitizeMetricName(String metricName) {
-        /**
-         * From vendor/github.com/prometheus/common/model/metric.go:
-         * func IsValidMetricName(n LabelValue) bool {
-         *         if len(n) == 0 {
-         *                 return false
-         *         }
-         *         for i, b := range n {
-         *                 if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || b == ':' || (b >= '0' && b <= '9' && i > 0)) {
-         *                         return false
-         *                 }
-         *         }
-         *         return true
-         */
+        // Hard-coded implementation optimized for speed - see
+        // See https://github.com/prometheus/common/blob/v0.22.0/model/metric.go#L92
         StringBuilder sb = new StringBuilder();
         for (int i=0; i < metricName.length(); i++) {
             char b = metricName.charAt(i);
@@ -279,20 +268,8 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public static String sanitizeLabelName(String labelName) {
-        /*
-         * From vendor/github.com/prometheus/common/model/labels.go
-         * func (ln LabelName) IsValid() bool {
-            if len(ln) == 0 {
-                return false
-            }
-            for i, b := range ln {
-                if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || (b >= '0' && b <= '9' && i > 0)) {
-                    return false
-                }
-            }
-            return true
-           }
-         */
+        // Hard-coded implementation optimized for speed - see
+        // See https://github.com/prometheus/common/blob/v0.22.0/model/labels.go#L95
         StringBuilder sb = new StringBuilder();
         for (int i=0; i < labelName.length(); i++) {
             char b = labelName.charAt(i);
