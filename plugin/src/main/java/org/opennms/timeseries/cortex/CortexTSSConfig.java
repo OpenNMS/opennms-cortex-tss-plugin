@@ -12,6 +12,7 @@ public class CortexTSSConfig {
     private final long metricCacheSize;
     private final long bulkheadMaxWaitDurationInMs;
     private final String organizationId;
+    private final boolean hasOrganizationId;
 
     public CortexTSSConfig() {
         this(builder());
@@ -26,6 +27,7 @@ public class CortexTSSConfig {
         this.metricCacheSize = builder.metricCacheSize;
         this.bulkheadMaxWaitDurationInMs = builder.bulkheadMaxWaitDurationInMs;
         this.organizationId = builder.organizationId;
+        this.hasOrganizationId = organizationId != null && organizationId.trim().length() > 0;
     }
 
     /** Will be called via blueprint. The builder can be called when not running as Osgi plugin. */
@@ -75,6 +77,10 @@ public class CortexTSSConfig {
 
     public long getBulkheadMaxWaitDurationInMs() {
         return bulkheadMaxWaitDurationInMs;
+    }
+
+    public boolean hasOrganizationId() {
+        return hasOrganizationId;
     }
 
     public String getOrganizationId() {

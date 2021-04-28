@@ -188,7 +188,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
                 .post(body);
         // Add the OrgId header if set
-        if (config.getOrganizationId() != null) {
+        if (config.hasOrganizationId()) {
             builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
         }
         final Request request = builder.build();
@@ -387,7 +387,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
                 .get();
         // Add the Org Id header if set
-        if (config.getOrganizationId() != null) {
+        if (config.hasOrganizationId()) {
             builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
         }
         final Request httpRequest = builder.build();
