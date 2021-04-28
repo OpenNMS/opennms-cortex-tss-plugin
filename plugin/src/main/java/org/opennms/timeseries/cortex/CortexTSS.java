@@ -108,6 +108,8 @@ public class CortexTSS implements TimeSeriesStorage {
     // Used to sanitize the label name
     private static final Pattern SANITIZE_LABEL_NAME_PATTERN = Pattern.compile("[^a-zA-Z0-9_]");
 
+    private static final String X_SCOPE_ORG_ID_HEADER = "X-Scope-OrgID";
+
     private static final MediaType PROTOBUF_MEDIA_TYPE = MediaType.parse("application/x-protobuf");
 
     public final static Set<String> INTRINSIC_TAG_NAMES = Sets.newHashSet(IntrinsicTagNames.name, IntrinsicTagNames.resourceId);
@@ -179,13 +181,17 @@ public class CortexTSS implements TimeSeriesStorage {
 
         // Build the HTTP request
         final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, writeRequestCompressed);
-        final Request request = new Request.Builder()
+        final Request.Builder builder = new Request.Builder()
                 .url(config.getWriteUrl())
                 .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
                 .addHeader("Content-Encoding", "snappy")
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
-                .post(body)
-                .build();
+                .post(body);
+        // Add the OrgId header if set
+        if (config.getOrganizationId() != null) {
+            builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
+        }
+        final Request request = builder.build();
 
         LOG.trace("Writing: {}", writeRequest);
         asyncHttpCallsBulkhead.executeCompletionStage(() -> executeAsync(request)).whenComplete((r,ex) -> {
@@ -376,11 +382,16 @@ public class CortexTSS implements TimeSeriesStorage {
 
     private String makeCallToQueryApi(final String url) throws StorageException {
 
-        Request httpRequest = new Request.Builder()
+        final Request.Builder builder = new Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
-                .get()
-                .build();
+                .get();
+        // Add the Org Id header if set
+        if (config.getOrganizationId() != null) {
+            builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
+        }
+        final Request httpRequest = builder.build();
+
         try (Response response = client.newCall(httpRequest).execute()) {
             if (!response.isSuccessful()) {
                 String bodyMsg = "";

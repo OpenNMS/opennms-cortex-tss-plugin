@@ -11,7 +11,7 @@ public class CortexTSSConfig {
     private final long readTimeoutInMs;
     private final long metricCacheSize;
     private final long bulkheadMaxWaitDurationInMs;
-
+    private final String organizationId;
 
     public CortexTSSConfig() {
         this(builder());
@@ -25,6 +25,7 @@ public class CortexTSSConfig {
         this.readTimeoutInMs = builder.readTimeoutInMs;
         this.metricCacheSize = builder.metricCacheSize;
         this.bulkheadMaxWaitDurationInMs = builder.bulkheadMaxWaitDurationInMs;
+        this.organizationId = builder.organizationId;
     }
 
     /** Will be called via blueprint. The builder can be called when not running as Osgi plugin. */
@@ -35,15 +36,17 @@ public class CortexTSSConfig {
             final long writeTimeoutInMs,
             final long readTimeoutInMs,
             final long metricCacheSize,
-            final long bulkheadMaxWaitDurationInMs) {
+            final long bulkheadMaxWaitDurationInMs,
+            final String organizationId) {
         this(builder()
                 .writeUrl(writeUrl)
                 .readUrl(readUrl)
                 .maxConcurrentHttpConnections(maxConcurrentHttpConnections)
                 .writeTimeoutInMs(writeTimeoutInMs)
                 .readTimeoutInMs(readTimeoutInMs)
-        .metricCacheSize(metricCacheSize)
-        .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs));
+                .metricCacheSize(metricCacheSize)
+                .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs)
+                .organizationId(organizationId));
     }
 
     public String getWriteUrl() {
@@ -74,6 +77,10 @@ public class CortexTSSConfig {
         return bulkheadMaxWaitDurationInMs;
     }
 
+    public String getOrganizationId() {
+        return organizationId;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -86,6 +93,7 @@ public class CortexTSSConfig {
         private long readTimeoutInMs = 1000;
         private long metricCacheSize = 1000;
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;
+        private String organizationId = null;
 
         public Builder writeUrl(final String writeUrl) {
             this.writeUrl = writeUrl;
@@ -122,6 +130,11 @@ public class CortexTSSConfig {
             return this;
         }
 
+        public Builder organizationId(final String organizationId) {
+            this.organizationId = organizationId;
+            return this;
+        }
+
         public CortexTSSConfig build() {
             return new CortexTSSConfig(this);
         }
@@ -137,6 +150,7 @@ public class CortexTSSConfig {
                 .add("readTimeoutInMs=" + readTimeoutInMs)
                 .add("metricCacheSize=" + metricCacheSize)
                 .add("bulkheadMaxWaitDurationInMs=" + bulkheadMaxWaitDurationInMs)
+                .add("organizationId=" + organizationId)
                 .toString();
     }
 }
