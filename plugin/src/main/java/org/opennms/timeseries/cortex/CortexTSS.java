@@ -215,20 +215,23 @@ public class CortexTSS implements TimeSeriesStorage {
 
             @Override
             public void onResponse(Call call, Response response) {
-                if (!response.isSuccessful()) {
-                    String bodyAsString;
-                    try(ResponseBody body = response.body()) {
-                        bodyAsString = body.string();
-                    } catch (IOException e) {
-                        bodyAsString = "(error reading body)";
+                try (ResponseBody body = response.body()) {
+                    if (!response.isSuccessful()) {
+                        String bodyAsString = "(null)";
+                        if (body != null) {
+                            try {
+                                bodyAsString = body.string();
+                            } catch (IOException e) {
+                                bodyAsString = "(error reading body)";
+                            }
+                        }
+                        future.completeExceptionally(new StorageException(String.format("Writing to Prometheus failed: %s - %s: %s",
+                                response.code(),
+                                response.message(),
+                                bodyAsString)));
+                    } else {
+                        future.complete(null);
                     }
-
-                    future.completeExceptionally(new StorageException(String.format("Writing to Prometheus failed: %s - %s: %s",
-                            response.code(),
-                            response.message(),
-                            bodyAsString)));
-                } else {
-                    future.complete(null);
                 }
             }
         });
