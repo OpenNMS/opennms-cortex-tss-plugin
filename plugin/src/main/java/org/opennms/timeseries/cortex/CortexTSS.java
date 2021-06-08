@@ -395,21 +395,19 @@ public class CortexTSS implements TimeSeriesStorage {
         try (Response response = client.newCall(httpRequest).execute()) {
             if (!response.isSuccessful()) {
                 String bodyMsg = "";
-                ResponseBody responseBody = response.body();
-                if (responseBody != null) {
-                    try {
+                try(ResponseBody responseBody = response.body()) {
+                    if (responseBody != null) {
                         bodyMsg = responseBody.string();
-                    } finally {
-                        responseBody.close();
                     }
                 }
                 throw new StorageException(String.format("Call to %s failed: response code:%s, response message:%s, bodyMessage:%s", url, response.code(), response.message(), bodyMsg));
             }
-            ResponseBody responseBody = response.body();
-            if (responseBody != null) {
-                return responseBody.string();
-            } else {
-                throw new StorageException(String.format("Call to %s delivered no body.", url));
+            try(ResponseBody responseBody = response.body()) {
+                if (responseBody != null) {
+                    return responseBody.string();
+                } else {
+                    throw new StorageException(String.format("Call to %s delivered no body.", url));
+                }
             }
         } catch (IOException | StorageException e) {
             throw new StorageException(String.format("Call to %s failed.", url), e);
