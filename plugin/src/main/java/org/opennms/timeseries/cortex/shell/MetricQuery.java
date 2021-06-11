@@ -41,8 +41,8 @@ import org.apache.karaf.shell.api.action.Command;
 import org.apache.karaf.shell.api.action.lifecycle.Reference;
 import org.apache.karaf.shell.api.action.lifecycle.Service;
 import org.opennms.integration.api.v1.timeseries.Metric;
-import org.opennms.integration.api.v1.timeseries.Tag;
-import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTag;
+import org.opennms.integration.api.v1.timeseries.TagMatcher;
+import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTagMatcher;
 import org.opennms.timeseries.cortex.CortexTSS;
 
 @Command(scope = "opennms-cortex", name = "query-metrics", description = "Find metrics.", detailedDescription= "pairs")
@@ -57,9 +57,9 @@ public class MetricQuery implements Action {
 
     @Override
     public Object execute() throws Exception {
-        final List<Tag> tags = toTags(arguments);
+        final List<TagMatcher> tags = toTags(arguments);
         System.out.println("Querying metrics for tags: " + tags);
-        List<Metric> metrics = tss.getMetrics(tags);
+        List<Metric> metrics = tss.findMetrics(tags);
         System.out.println("Metrics:");
         for (Metric metric : metrics) {
             System.out.println("\t" + metric);
@@ -70,7 +70,7 @@ public class MetricQuery implements Action {
         return null;
     }
 
-    public static List<Tag> toTags(final Collection<String> s) {
+    public static List<TagMatcher> toTags(final Collection<String> s) {
         if (s.size() % 2 == 1) {
             throw new IllegalArgumentException("collection must have an even number of arguments");
         }
@@ -79,7 +79,7 @@ public class MetricQuery implements Action {
                 Collectors.groupingBy(el -> {
                     final int i = counter.getAndIncrement();
                     return (i % 2 == 0) ? i : i - 1;
-                })).values().stream().map(a -> new ImmutableTag(a.get(0), (a.size() == 2 ? a.get(1) : null)))
+                })).values().stream().map(a -> ImmutableTagMatcher.builder().key(a.get(0)).value((a.size() == 2 ? a.get(1) : null)).build())
                 .collect(Collectors.toList());
     }
 }

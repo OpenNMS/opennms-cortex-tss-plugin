@@ -55,6 +55,7 @@ import org.opennms.integration.api.v1.timeseries.Tag;
 import org.opennms.integration.api.v1.timeseries.TagMatcher;
 import org.opennms.integration.api.v1.timeseries.TimeSeriesFetchRequest;
 import org.opennms.integration.api.v1.timeseries.TimeSeriesStorage;
+import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTagMatcher.TagMatcherBuilder;
 import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.Bulkhead;
 import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.BulkheadConfig;
 import org.slf4j.Logger;
@@ -313,7 +314,11 @@ public class CortexTSS implements TimeSeriesStorage {
     private Optional<Metric> loadMetric(final Metric metric) throws StorageException {
         Metric loadedMetric = this.metricCache.getIfPresent(metric.getKey());
         if(loadedMetric == null) {
-            List<Metric> metrics = getMetrics(metric.getIntrinsicTags());
+            List<TagMatcher> matchers = metric.getIntrinsicTags().stream()
+                    .map(TagMatcherBuilder::of) // build matcher that matches this tag
+                    .map(TagMatcherBuilder::build)
+                    .collect(Collectors.toList());
+            List<Metric> metrics = findMetrics(matchers);
             if(metrics.size() < 1 ) {
                 return Optional.empty();
             }
