@@ -144,6 +144,22 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
                 timeOfLastSample, expectedEarliestTimeOfLastSample),timeOfLastSample.isAfter(expectedEarliestTimeOfLastSample));
     }
 
+    @Test
+    @Ignore
+    public void shouldFindWithNotEquals() throws Exception {
+        // Cortex doesn't seem to work with negative comparison even though the documentation says so.
+        // Maybe we query wrong?
+        // Example: http://localhost:9009/prometheus/api/v1/series?match[]={resourceId!="snmp:1:opennms-jvm:org_opennms_newts_name_ring_buffer_max_size_unit=unknown"}
+    }
+
+    @Test
+    @Ignore
+    public void shouldFindOneMetricWithRegexNotMatching() throws Exception {
+        // Cortex doesn't seem to work with negative comparison even though the documentation says so.
+        // Maybe we query wrong?
+        // Example: http://localhost:9009/prometheus/api/v1/series?match[]={resourceId!~"snmp:1:opennms-jvm:org_opennms_newts_name_ring_buffer_max_size_unit=unknown"}
+    }
+
     @Override
     @Ignore // not yet implemented
     public void shouldDeleteMetrics() { }
