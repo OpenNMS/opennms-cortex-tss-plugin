@@ -64,6 +64,7 @@ public class ResultMapper {
     public static <T> Metric toMetricFromMap(Map<String, T> tags) {
         final Set<Tag> intrinsicTags = new LinkedHashSet<>();
         final Set<Tag> metaTags = new LinkedHashSet<>();
+        final Set<Tag> externalTags = new LinkedHashSet<>();
         for (Map.Entry<String, T> entry : tags.entrySet()) {
             final String labelName = entry.getKey();
             final String labelValue = entry.getValue().toString();
@@ -76,11 +77,13 @@ public class ResultMapper {
             final Tag tag = new ImmutableTag(labelName, labelValue);
             if (INTRINSIC_TAG_NAMES.contains(labelName)) {
                 intrinsicTags.add(tag);
+            } else if (labelName.startsWith("_ext")) {
+                externalTags.add(tag);
             } else {
                 metaTags.add(tag);
             }
         }
-        return new ImmutableMetric(intrinsicTags, metaTags);
+        return new ImmutableMetric(intrinsicTags, metaTags, externalTags);
     }
 
     static <T> Stream<T> iteratorToFiniteStream(final Iterator<T> iterator) {
