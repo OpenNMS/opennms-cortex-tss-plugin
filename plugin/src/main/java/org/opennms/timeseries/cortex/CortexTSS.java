@@ -28,6 +28,8 @@
 
 package org.opennms.timeseries.cortex;
 
+import static org.opennms.timeseries.cortex.ResultMapper.externalTagToLabel;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Arrays;
@@ -256,6 +258,12 @@ public class CortexTSS implements TimeSeriesStorage {
                                 .setValue(tag.getValue()));
                     }
                 });
+        // Convert external tags
+        for(Tag tag : sample.getMetric().getExternalTags()){
+            builder.addLabels(externalTagToLabel(tag));
+        }
+
+
         // Add the sample timestamp & value
         builder.addSamples(PrometheusTypes.Sample.newBuilder()
                 .setTimestamp(sample.getTime().toEpochMilli())

@@ -11,6 +11,7 @@
           "_idx2": "(snmp:1:opennms-jvm,4)",
           "_idx2w": "(snmp:1,*)",
           "_idx3": "(snmp:1:opennms-jvm:OpenNMS_Name_Notifd,4)",
+          "_ext_123": "key=value",
           "host": "myHost1",
           "mtype": "counter",
           "resourceId": "snmp:1:opennms-jvm:org_opennms_newts_name_ring_buffer_max_size_unit=unknown"
