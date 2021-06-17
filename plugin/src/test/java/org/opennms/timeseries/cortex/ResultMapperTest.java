@@ -32,6 +32,7 @@ public class ResultMapperTest {
                 .metaTag("_idx2", "(snmp:1:opennms-jvm,4)")
                 .metaTag("_idx2w", "(snmp:1,*)")
                 .metaTag("_idx3", "(snmp:1:opennms-jvm:OpenNMS_Name_Notifd,4)")
+                .externalTag("key", "value")
                 .metaTag("host", "myHost1")
                 .metaTag("mtype", "counter")
                 .build();

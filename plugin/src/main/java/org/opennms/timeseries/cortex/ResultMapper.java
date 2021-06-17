@@ -5,10 +5,8 @@ import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_LABEL;
 
 import java.time.Instant;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.Spliterators;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -23,6 +21,8 @@ import org.opennms.integration.api.v1.timeseries.Tag;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableSample;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTag;
+
+import prometheus.PrometheusTypes;
 
 public class ResultMapper {
 
@@ -62,28 +62,45 @@ public class ResultMapper {
     }
 
     public static <T> Metric toMetricFromMap(Map<String, T> tags) {
-        final Set<Tag> intrinsicTags = new LinkedHashSet<>();
-        final Set<Tag> metaTags = new LinkedHashSet<>();
+        ImmutableMetric.MetricBuilder metric = ImmutableMetric.builder();
+
         for (Map.Entry<String, T> entry : tags.entrySet()) {
             final String labelName = entry.getKey();
             final String labelValue = entry.getValue().toString();
 
             if (METRIC_NAME_LABEL.equals(labelName)) {
-                intrinsicTags.add(new ImmutableTag(IntrinsicTagNames.name, labelValue));
-                continue;
-            }
-
-            final Tag tag = new ImmutableTag(labelName, labelValue);
-            if (INTRINSIC_TAG_NAMES.contains(labelName)) {
-                intrinsicTags.add(tag);
-            } else {
-                metaTags.add(tag);
+                metric.intrinsicTag(IntrinsicTagNames.name, labelValue);
+            } else if (labelName.startsWith("_ext")) {
+                metric.externalTag(externalLabelToTag(labelValue));
+            } else if (INTRINSIC_TAG_NAMES.contains(labelName)) {
+                metric.intrinsicTag(labelName, labelValue);
+            } else  {
+                metric.metaTag(labelName, labelValue);
             }
         }
-        return new ImmutableMetric(intrinsicTags, metaTags);
+        return metric.build();
     }
 
     static <T> Stream<T> iteratorToFiniteStream(final Iterator<T> iterator) {
         return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, 0), false);
+    }
+
+    static PrometheusTypes.Label.Builder externalTagToLabel(final Tag tag) {
+        // _ext_%hash% = %key%=%value%
+        // %hash% is a hash of the value - the key contains special characters we want to preserve, so we place it in the value instead
+        String value = tag.getKey() + "=" + tag.getValue();
+        String name = "_ext_" + value.hashCode();
+        return PrometheusTypes.Label.newBuilder()
+                .setName(name)
+                .setValue(value);
+    }
+
+    static Tag externalLabelToTag(final String labelValue) {
+        // _ext_%hash% = %key%=%value%
+        // %hash% is a hash of the value - the key contains special characters we want to preserve, so we place it in the value instead
+        String[] keyValue = labelValue.split("=");
+        String key = keyValue[0];
+        String value = keyValue[1];
+        return new ImmutableTag(key, value);
     }
 }
