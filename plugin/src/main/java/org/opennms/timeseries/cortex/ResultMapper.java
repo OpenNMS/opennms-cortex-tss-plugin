@@ -88,8 +88,8 @@ public class ResultMapper {
     static PrometheusTypes.Label.Builder externalTagToLabel(final Tag tag) {
         // _ext_%hash% = %key%=%value%
         // %hash% is a hash of the value - the key contains special characters we want to preserve, so we place it in the value instead
-        String name = "_ext_" + tag.getValue().hashCode();
         String value = tag.getKey() + "=" + tag.getValue();
+        String name = "_ext_" + value.hashCode();
         return PrometheusTypes.Label.newBuilder()
                 .setName(name)
                 .setValue(value);

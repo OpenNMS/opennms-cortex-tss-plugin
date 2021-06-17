@@ -473,8 +473,11 @@ public class CortexTSS implements TimeSeriesStorage {
             String value;
             if (IntrinsicTagNames.name.equals(matcher.getKey())) {
                 key = METRIC_NAME_LABEL;
-                // TODO: Patrick: sanitation is deactivated since we kill otherwise the regex. We need to find a better solution for that...
-                value = matcher.getValue(); // sanitizeMetricName(tag.getValue());
+                if(TagMatcher.Type.EQUALS == matcher.getType() || TagMatcher.Type.NOT_EQUALS == matcher.getType()) {
+                    value = sanitizeMetricName(matcher.getValue());
+                } else {
+                    value = matcher.getValue();
+                }
             } else {
                 key = sanitizeLabelName(matcher.getKey());
                 // see NMS-13157: the backslash must be escaped since it is the escape character itself
