@@ -96,7 +96,7 @@ import prometheus.PrometheusTypes;
  *
  * @author jwhite
  */
-public class CortexTSS implements TimeSeriesStorage {
+public class CortexTSS {
     private static final Logger LOG = LoggerFactory.getLogger(CortexTSS.class);
 
     // Label name indicating the metric name of a timeseries.
@@ -165,8 +165,7 @@ public class CortexTSS implements TimeSeriesStorage {
         metrics.register("maxAllowedConcurrentCalls", (Gauge<Integer>) () -> asyncHttpCallsBulkhead.getMetrics().getMaxAllowedConcurrentCalls());
     }
 
-    @Override
-    public void store(final List<Sample> samples) throws StorageException {
+    public void store(final List<Sample> samples, String clientID) throws StorageException {
         final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
@@ -192,8 +191,8 @@ public class CortexTSS implements TimeSeriesStorage {
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
                 .post(body);
         // Add the OrgId header if set
-        if (config.hasOrganizationId()) {
-            builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
+        if (clientID!=null && clientID.length()>0) {
+            builder.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
         }
         final Request request = builder.build();
 
@@ -301,8 +300,8 @@ public class CortexTSS implements TimeSeriesStorage {
         return sb.toString();
     }
 
-    @Override
     public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers) throws StorageException {
+        //include the clientID
         LOG.info("Retrieving metrics for tagMatchers: {}", tagMatchers);
         Objects.requireNonNull(tagMatchers);
         if(tagMatchers.isEmpty()) {
@@ -336,7 +335,6 @@ public class CortexTSS implements TimeSeriesStorage {
         return Optional.of(loadedMetric);
     }
 
-    @Override
     public List<Sample> getTimeseries(TimeSeriesFetchRequest request) throws StorageException {
 
         // first load the original metric - we need it for the meta data
@@ -507,7 +505,6 @@ public class CortexTSS implements TimeSeriesStorage {
         }
     }
 
-    @Override
     public void delete(Metric metric) {
         LOG.warn("Deletes are not currently supported. Ignoring delete for: {}", metric);
         // delete can only be done when enabled:
