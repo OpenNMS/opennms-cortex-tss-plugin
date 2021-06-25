@@ -34,6 +34,6 @@ public class PushSample {
                     .value((double)random.nextInt(8000 - 3000) + 3000)
                     .time(Instant.now().minus(i*10, ChronoUnit.MINUTES)).build());
         }
-        cortexTss.store(samples, "testClient");
+        cortexTss.store(samples);
     }
 }

@@ -36,7 +36,6 @@ import org.testcontainers.containers.wait.strategy.Wait;
 public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(CortexTSSIntegrationTest.class);
-    private static String CLIENT_ID = "testClient";
 
     @ClassRule
     public static DockerComposeContainer<?> environment = new DockerComposeContainer<>(new File("src/test/resources/org/opennms/timeseries/cortex/docker-compose.yaml"))
@@ -105,7 +104,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
                     .build());
             time = time.plus(1, ChronoUnit.HOURS);
         }
-        storage.store(originalSamples, CLIENT_ID);
+        storage.store(originalSamples);
         // The writes are async. Therefore we need to wait a bit before reading...
         Thread.sleep(10000);
 
