@@ -520,7 +520,7 @@ public class CortexTSS {
         return metrics;
     }
 
-    @Override
+
     public boolean supportsAggregation(Aggregation aggregation) {
         return SUPPORTED_AGGREGATION.contains(aggregation);
     }
