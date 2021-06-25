@@ -169,6 +169,7 @@ public class CortexTSS implements TimeSeriesStorage {
     public void store(final List<Sample> samples) throws StorageException {
         store(samples, config.getOrganizationId());
     }
+
     public void store(final List<Sample> samples, String clientID) throws StorageException {
         final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
                 .sorted(Comparator.comparing(Sample::getTime))
@@ -308,6 +309,7 @@ public class CortexTSS implements TimeSeriesStorage {
     public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers) throws StorageException {
         return findMetrics(tagMatchers, config.getOrganizationId());
     }
+
     public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers, String clientID) throws StorageException {
         LOG.info("Retrieving metrics for tagMatchers: {}", tagMatchers);
         Objects.requireNonNull(tagMatchers);
@@ -346,6 +348,7 @@ public class CortexTSS implements TimeSeriesStorage {
     public List<Sample> getTimeseries(TimeSeriesFetchRequest request) throws StorageException {
         return getTimeseries(request, config.getOrganizationId());
     }
+
     public List<Sample> getTimeseries(TimeSeriesFetchRequest request, String clientID) throws StorageException {
 
         // first load the original metric - we need it for the meta data
