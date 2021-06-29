@@ -167,6 +167,10 @@ public class CortexTSS implements TimeSeriesStorage {
 
     @Override
     public void store(final List<Sample> samples) throws StorageException {
+        store(samples, config.getOrganizationId());
+    }
+
+    public void store(final List<Sample> samples, String clientID) throws StorageException {
         final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
@@ -192,8 +196,8 @@ public class CortexTSS implements TimeSeriesStorage {
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
                 .post(body);
         // Add the OrgId header if set
-        if (config.hasOrganizationId()) {
-            builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
+        if (clientID != null && clientID.trim().length() > 0) {
+            builder.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
         }
         final Request request = builder.build();
 
@@ -303,6 +307,10 @@ public class CortexTSS implements TimeSeriesStorage {
 
     @Override
     public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers) throws StorageException {
+        return findMetrics(tagMatchers, config.getOrganizationId());
+    }
+
+    public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers, String clientID) throws StorageException {
         LOG.info("Retrieving metrics for tagMatchers: {}", tagMatchers);
         Objects.requireNonNull(tagMatchers);
         if(tagMatchers.isEmpty()) {
@@ -311,7 +319,7 @@ public class CortexTSS implements TimeSeriesStorage {
         String url = String.format("%s/series?match[]={%s}",
                 config.getReadUrl(),
                 tagMatchersToQuery(tagMatchers));
-        String json = makeCallToQueryApi(url);
+        String json = makeCallToQueryApi(url, clientID);
         List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json);
         metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
         return metrics;
@@ -338,6 +346,10 @@ public class CortexTSS implements TimeSeriesStorage {
 
     @Override
     public List<Sample> getTimeseries(TimeSeriesFetchRequest request) throws StorageException {
+        return getTimeseries(request, config.getOrganizationId());
+    }
+
+    public List<Sample> getTimeseries(TimeSeriesFetchRequest request, String clientID) throws StorageException {
 
         // first load the original metric - we need it for the meta data
         Optional<Metric> metric = loadMetric(request.getMetric());
@@ -355,7 +367,7 @@ public class CortexTSS implements TimeSeriesStorage {
         LOG.info("Retrieving time series for metric: {} with query {}", request, url);
 
 
-        String json = makeCallToQueryApi(url);
+        String json = makeCallToQueryApi(url, clientID);
         return ResultMapper.fromRangeQueryResult(json, metric.get());
     }
 
@@ -401,12 +413,15 @@ public class CortexTSS implements TimeSeriesStorage {
         }
     }
 
-    private String makeCallToQueryApi(final String url) throws StorageException {
+    private String makeCallToQueryApi(final String url, String clientID) throws StorageException {
 
         final Request.Builder builder = new Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
                 .get();
+        if(clientID != null && clientID.trim().length()>0) {
+            builder.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
+        }
         // Add the Org Id header if set
         if (config.hasOrganizationId()) {
             builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
