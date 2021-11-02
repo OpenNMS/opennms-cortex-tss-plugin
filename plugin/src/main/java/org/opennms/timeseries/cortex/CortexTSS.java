@@ -267,7 +267,6 @@ public class CortexTSS implements TimeSeriesStorage {
             builder.addLabels(externalTagToLabel(tag));
         }
 
-
         // Add the sample timestamp & value
         builder.addSamples(PrometheusTypes.Sample.newBuilder()
                 .setTimestamp(sample.getTime().toEpochMilli())

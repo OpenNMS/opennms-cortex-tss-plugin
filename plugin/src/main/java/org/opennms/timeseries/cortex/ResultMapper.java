@@ -2,6 +2,7 @@ package org.opennms.timeseries.cortex;
 
 import static org.opennms.timeseries.cortex.CortexTSS.INTRINSIC_TAG_NAMES;
 import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_LABEL;
+import static org.opennms.timeseries.cortex.CortexTSS.sanitizeLabelValue;
 
 import java.time.Instant;
 import java.util.Iterator;
@@ -92,7 +93,7 @@ public class ResultMapper {
         String name = "_ext_" + Math.abs(value.hashCode());
         return PrometheusTypes.Label.newBuilder()
                 .setName(name)
-                .setValue(value);
+                .setValue(sanitizeLabelValue(value));
     }
 
     static Tag externalLabelToTag(final String labelValue) {
