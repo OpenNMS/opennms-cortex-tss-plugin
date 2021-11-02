@@ -259,7 +259,7 @@ public class CortexTSS implements TimeSeriesStorage {
                     } else {
                         builder.addLabels(PrometheusTypes.Label.newBuilder()
                                 .setName(sanitizeLabelName(tag.getKey()))
-                                .setValue(tag.getValue()));
+                                .setValue(sanitizeLabelValue(tag.getValue())));
                     }
                 });
         // Convert external tags
@@ -303,6 +303,11 @@ public class CortexTSS implements TimeSeriesStorage {
             }
         }
         return sb.toString();
+    }
+
+    public static String sanitizeLabelValue(String labelValue) {
+        // limit label value to 2048 characters
+        return labelValue.substring(0, Math.min(labelValue.length(), 2048));
     }
 
     @Override
