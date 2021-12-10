@@ -17,7 +17,7 @@
         <json.version>20200518</json.version>
         <junit.version>4.13.1</junit.version>
         <karaf.version>4.3.2</karaf.version>
-        <log4j.version>2.13.3</log4j.version>
+        <log4j.version>2.15.0</log4j.version>
         <metrics.version>4.1.2</metrics.version>
         <mockito.version>2.18.0</mockito.version>
         <okio.bundle.version>1.14.0_1</okio.bundle.version>
