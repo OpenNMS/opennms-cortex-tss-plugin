@@ -1,4 +1,4 @@
-# OpenNMS Cortex Plugin [![CircleCI](https://circleci.com/gh/OpenNMS/opennms-cortex-tss-plugin.svg?style=svg)](https://circleci.com/gh/OpenNMS/opennms-cortex-tss-plugin)
+# OpenNMS Cortex Plugin [![CircleCI](https://circleci.com/gh/OpenNMS/opennms-cortex-tss-plugin.svg?style=svg)](https://circleci.com/gh/OpenNMS/opennms-cortex-tss-plugin) [![Project Status: WIP – Initial development is in progress, but there has not yet been a stable, usable release suitable for the public.](https://www.repostatus.org/badges/latest/wip.svg)](https://www.repostatus.org/#wip)
 
 This plugin exposes an implementation of the [TimeSeriesStorage](https://github.com/OpenNMS/opennms-integration-api/blob/v0.4.1/api/src/main/java/org/opennms/integration/api/v1/timeseries/TimeSeriesStorage.java#L40) interface that converts metrics to a Prometheus model and delegates writes & reads to [Cortex](https://cortexmetrics.io/).
 
