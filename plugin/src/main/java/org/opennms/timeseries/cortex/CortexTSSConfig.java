@@ -6,6 +6,11 @@ import java.util.StringJoiner;
 public class CortexTSSConfig {
     private final String writeUrl;
     private final String readUrl;
+    private final boolean useSeparateExternalTagStorage;
+    private final String externalTagStorageHost;
+    private final long externalTagStoragePort;
+    private final int maxConcurrentTagStorageConnections;
+    private final long maxTagCacheSize;
     private final int maxConcurrentHttpConnections;
     private final long writeTimeoutInMs;
     private final long readTimeoutInMs;
@@ -28,6 +33,11 @@ public class CortexTSSConfig {
         this.bulkheadMaxWaitDurationInMs = builder.bulkheadMaxWaitDurationInMs;
         this.organizationId = builder.organizationId;
         this.hasOrganizationId = organizationId != null && organizationId.trim().length() > 0;
+        this.useSeparateExternalTagStorage = builder.useSeparateExternalTagStorage;
+        this.externalTagStorageHost = builder.externalTagStorageHost;
+        this.externalTagStoragePort = builder.externalTagStoragePort;
+        this.maxConcurrentTagStorageConnections = builder.maxConcurrentTagStorageConnections;
+        this.maxTagCacheSize = builder.maxTagCacheSize;
     }
 
     /** Will be called via blueprint. The builder can be called when not running as Osgi plugin. */
@@ -48,8 +58,39 @@ public class CortexTSSConfig {
                 .readTimeoutInMs(readTimeoutInMs)
                 .metricCacheSize(metricCacheSize)
                 .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs)
-                .organizationId(organizationId));
+                .organizationId(organizationId)
+                .useSeparateExternalTagStorage(false));
     }
+
+    public CortexTSSConfig(
+            final String writeUrl,
+            final String readUrl,
+            final int maxConcurrentHttpConnections,
+            final long writeTimeoutInMs,
+            final long readTimeoutInMs,
+            final long metricCacheSize,
+            final long bulkheadMaxWaitDurationInMs,
+            final String organizationId,
+            final String externalTagStorageHost,
+            final long externalTagStoragePort,
+            final int maxConcurrentTagStorageConnections,
+            final int maxTagCacheSize) {
+        this(builder()
+                .writeUrl(writeUrl)
+                .readUrl(readUrl)
+                .maxConcurrentHttpConnections(maxConcurrentHttpConnections)
+                .writeTimeoutInMs(writeTimeoutInMs)
+                .readTimeoutInMs(readTimeoutInMs)
+                .metricCacheSize(metricCacheSize)
+                .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs)
+                .organizationId(organizationId)
+                .useSeparateExternalTagStorage(true)
+                .externalTagStorageHost(externalTagStorageHost)
+                .externalTagStoragePort(externalTagStoragePort)
+                .maxConcurrentTagStorageConnections(maxConcurrentTagStorageConnections)
+                .maxTagCacheSize(maxTagCacheSize));
+    }
+
 
     public String getWriteUrl() {
         return writeUrl;
@@ -87,6 +128,16 @@ public class CortexTSSConfig {
         return organizationId;
     }
 
+    public boolean useSeparateExternalTagStorage() { return useSeparateExternalTagStorage; }
+
+    public String getExternalTagStorageHost() { return externalTagStorageHost; }
+
+    public long getExternalTagStoragePort() { return externalTagStoragePort; }
+
+    public int getMaxConcurrentTagStorageConnections() { return maxConcurrentTagStorageConnections; }
+
+    public long getMaxTagCacheSize() { return maxTagCacheSize; }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -98,6 +149,13 @@ public class CortexTSSConfig {
         private long writeTimeoutInMs = 1000;
         private long readTimeoutInMs = 1000;
         private long metricCacheSize = 1000;
+
+        private boolean useSeparateExternalTagStorage = false;
+        private String externalTagStorageHost = "";
+        private long externalTagStoragePort = 3100;
+        private int maxConcurrentTagStorageConnections = 20;
+        private long maxTagCacheSize = 20000;
+
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;
         private String organizationId = null;
 
@@ -128,6 +186,31 @@ public class CortexTSSConfig {
 
         public Builder metricCacheSize(final long metricCacheSize) {
             this.metricCacheSize = metricCacheSize;
+            return this;
+        }
+
+        public Builder useSeparateExternalTagStorage(final boolean useSeparateExternalTagStorage) {
+            this.useSeparateExternalTagStorage = useSeparateExternalTagStorage;
+            return this;
+        }
+
+        public Builder externalTagStorageHost(final String externalTagStorageHost) {
+            this.externalTagStorageHost = externalTagStorageHost;
+            return this;
+        }
+
+        public Builder externalTagStoragePort(final long externalTagStoragePort) {
+            this.externalTagStoragePort = externalTagStoragePort;
+            return this;
+        }
+
+        public Builder maxConcurrentTagStorageConnections(final int maxConcurrentTagStorageConnections) {
+            this.maxConcurrentTagStorageConnections = maxConcurrentTagStorageConnections;
+            return this;
+        }
+
+        public Builder maxTagCacheSize(final int maxTagCacheSize) {
+            this.maxTagCacheSize = maxTagCacheSize;
             return this;
         }
 

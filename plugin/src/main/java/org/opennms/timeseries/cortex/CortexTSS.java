@@ -30,40 +30,6 @@ package org.opennms.timeseries.cortex;
 
 import static org.opennms.timeseries.cortex.ResultMapper.externalTagToLabel;
 
-import java.io.IOException;
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
-import org.opennms.integration.api.v1.timeseries.Aggregation;
-import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
-import org.opennms.integration.api.v1.timeseries.MetaTagNames;
-import org.opennms.integration.api.v1.timeseries.Metric;
-import org.opennms.integration.api.v1.timeseries.Sample;
-import org.opennms.integration.api.v1.timeseries.StorageException;
-import org.opennms.integration.api.v1.timeseries.Tag;
-import org.opennms.integration.api.v1.timeseries.TagMatcher;
-import org.opennms.integration.api.v1.timeseries.TimeSeriesFetchRequest;
-import org.opennms.integration.api.v1.timeseries.TimeSeriesStorage;
-import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTagMatcher.TagMatcherBuilder;
-import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.Bulkhead;
-import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.BulkheadConfig;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.xerial.snappy.Snappy;
-
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
@@ -71,19 +37,25 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
 import com.google.protobuf.ByteString;
-
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.ConnectionPool;
-import okhttp3.Dispatcher;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
+import okhttp3.*;
+import org.opennms.integration.api.v1.timeseries.*;
+import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTagMatcher.TagMatcherBuilder;
+import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.Bulkhead;
+import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.BulkheadConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xerial.snappy.Snappy;
 import prometheus.PrometheusRemote;
 import prometheus.PrometheusTypes;
+
+import java.io.IOException;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Time Series Storage integration for Cortex.
@@ -133,6 +105,9 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Bulkhead asyncHttpCallsBulkhead;
     private final CortexTSSConfig config;
 
+    private final TagStorage tagStorage;
+    private final boolean useSeparateTagStorage;
+
     public CortexTSS(final CortexTSSConfig config) {
         this.config = Objects.requireNonNull(config);
         ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
@@ -146,6 +121,13 @@ public class CortexTSS implements TimeSeriesStorage {
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .build();
+
+        useSeparateTagStorage = config.useSeparateExternalTagStorage();
+        if (useSeparateTagStorage) {
+            tagStorage = new LokiTagStore(config);
+        } else {
+            tagStorage = null;
+        }
 
         this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
 
@@ -175,6 +157,11 @@ public class CortexTSS implements TimeSeriesStorage {
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
 
+        if (useSeparateTagStorage) {
+            // Store the external tags separately
+            samplesSorted.forEach(s -> tagStorage.storeTags(s, clientID));
+        }
+
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
         samplesSorted.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
         PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
@@ -202,6 +189,7 @@ public class CortexTSS implements TimeSeriesStorage {
         final Request request = builder.build();
 
         LOG.trace("Writing: {}", writeRequest);
+
         asyncHttpCallsBulkhead.executeCompletionStage(() -> executeAsync(request)).whenComplete((r,ex) -> {
             if (ex == null) {
                 samplesWritten.mark(samplesSorted.size());
@@ -246,7 +234,7 @@ public class CortexTSS implements TimeSeriesStorage {
         return future;
     }
 
-    private static PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
+    private PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
         PrometheusTypes.TimeSeries.Builder builder = PrometheusTypes.TimeSeries.newBuilder();
         // Convert all of the tags to labels
         Stream.concat(sample.getMetric().getIntrinsicTags().stream(), sample.getMetric().getMetaTags().stream())
@@ -263,8 +251,10 @@ public class CortexTSS implements TimeSeriesStorage {
                     }
                 });
         // Convert external tags
-        for(Tag tag : sample.getMetric().getExternalTags()){
-            builder.addLabels(externalTagToLabel(tag));
+        if (! useSeparateTagStorage) {
+            for(Tag tag : sample.getMetric().getExternalTags()){
+                builder.addLabels(externalTagToLabel(tag));
+            }
         }
 
         // Add the sample timestamp & value
@@ -324,15 +314,41 @@ public class CortexTSS implements TimeSeriesStorage {
                 config.getReadUrl(),
                 tagMatchersToQuery(tagMatchers));
         String json = makeCallToQueryApi(url, clientID);
+
         List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json);
-        metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
+        for (Iterator<TagMatcher> iterator = tagMatchers.iterator(); iterator.hasNext(); ) {
+            TagMatcher tmatcher = iterator.next();
+        }
+
+        if (useSeparateTagStorage) {
+            // Get matching external tags from the external store
+            List<Metric> newmetrics = new ArrayList();
+
+            for (Iterator<Metric> iterator = metrics.iterator(); iterator.hasNext(); ) {
+                Metric nextMetric = iterator.next();
+                // Get the tag storage to regenerate the metric with new external tags
+                newmetrics.add(tagStorage.retrieveTags(nextMetric, clientID, System.currentTimeMillis()));
+            }
+            metrics = newmetrics;
+        }
+        metrics.forEach(m -> this.metricCache.put(generateCacheKey(m.getKey(), clientID), m));
         return metrics;
     }
 
+    private String generateCacheKey(String key, String clientID) {
+        if (clientID != null && clientID.trim().length() > 0) {
+            return key + "|" + clientID;
+        } else {
+            return key; // No tenanting
+        }
+    }
+
+
+
     /** Returns the full metric (incl. meta data from the database).
      * This is only needed if not in cache already - which it should be. */
-    private Optional<Metric> loadMetric(final Metric metric) throws StorageException {
-        Metric loadedMetric = this.metricCache.getIfPresent(metric.getKey());
+    private Optional<Metric> loadMetric(final Metric metric, final String clientID) throws StorageException {
+        Metric loadedMetric = this.metricCache.getIfPresent(generateCacheKey(metric.getKey(), clientID));
         if(loadedMetric == null) {
             List<TagMatcher> matchers = metric.getIntrinsicTags().stream()
                     .map(TagMatcherBuilder::of) // build matcher that matches this tag
@@ -343,7 +359,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 return Optional.empty();
             }
             loadedMetric = metrics.get(0);
-            this.metricCache.put(loadedMetric.getKey(), loadedMetric);
+            this.metricCache.put(generateCacheKey(loadedMetric.getKey(), clientID), loadedMetric);
         }
         return Optional.of(loadedMetric);
     }
@@ -356,7 +372,7 @@ public class CortexTSS implements TimeSeriesStorage {
     public List<Sample> getTimeseries(TimeSeriesFetchRequest request, String clientID) throws StorageException {
 
         // first load the original metric - we need it for the meta data
-        Optional<Metric> metric = loadMetric(request.getMetric());
+        Optional<Metric> metric = loadMetric(request.getMetric(), clientID);
         if(!metric.isPresent()) {
             return Collections.emptyList();
         }
@@ -426,10 +442,7 @@ public class CortexTSS implements TimeSeriesStorage {
         if(clientID != null && clientID.trim().length()>0) {
             builder.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
         }
-        // Add the Org Id header if set
-        if (config.hasOrganizationId()) {
-            builder.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
-        }
+
         final Request httpRequest = builder.build();
 
         try (Response response = client.newCall(httpRequest).execute()) {
