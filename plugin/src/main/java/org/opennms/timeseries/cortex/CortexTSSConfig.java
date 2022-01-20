@@ -152,7 +152,8 @@ public class CortexTSSConfig {
 
         private boolean useSeparateExternalTagStorage = false;
         private String externalTagStorageHost = "";
-        private long externalTagStoragePort = 3100;
+        private long externalTagStoragePort = 6379; // Redis non-tls
+
         private int maxConcurrentTagStorageConnections = 20;
         private long maxTagCacheSize = 20000;
 

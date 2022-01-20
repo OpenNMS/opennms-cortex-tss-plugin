@@ -42,6 +42,9 @@ import org.opennms.integration.api.v1.timeseries.*;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTagMatcher.TagMatcherBuilder;
 import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.Bulkhead;
 import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.BulkheadConfig;
+import org.opennms.timeseries.cortex.tagstorage.LokiTagStore;
+import org.opennms.timeseries.cortex.tagstorage.RedisTagStore;
+import org.opennms.timeseries.cortex.tagstorage.TagStorage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xerial.snappy.Snappy;
@@ -124,7 +127,8 @@ public class CortexTSS implements TimeSeriesStorage {
 
         useSeparateTagStorage = config.useSeparateExternalTagStorage();
         if (useSeparateTagStorage) {
-            tagStorage = new LokiTagStore(config);
+//            tagStorage = new LokiTagStore(config);
+            tagStorage = new RedisTagStore(config);
         } else {
             tagStorage = null;
         }
@@ -327,7 +331,7 @@ public class CortexTSS implements TimeSeriesStorage {
             for (Iterator<Metric> iterator = metrics.iterator(); iterator.hasNext(); ) {
                 Metric nextMetric = iterator.next();
                 // Get the tag storage to regenerate the metric with new external tags
-                newmetrics.add(tagStorage.retrieveTags(nextMetric, clientID, System.currentTimeMillis()));
+                newmetrics.add(tagStorage.retrieveTags(nextMetric, clientID));
             }
             metrics = newmetrics;
         }

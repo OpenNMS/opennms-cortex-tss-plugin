@@ -1,4 +1,4 @@
-package org.opennms.timeseries.cortex;
+package org.opennms.timeseries.cortex.tagstorage;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -8,15 +8,14 @@ import org.json.JSONObject;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
 import org.opennms.integration.api.v1.timeseries.StorageException;
-import org.opennms.integration.api.v1.timeseries.Tag;
-import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
+import org.opennms.timeseries.cortex.CortexTSSConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
+
+import static org.opennms.timeseries.cortex.tagstorage.TagStoreUtils.*;
 
 public class LokiTagStore implements TagStorage {
     private static final Logger LOG = LoggerFactory.getLogger(LokiTagStore.class);
@@ -58,30 +57,14 @@ public class LokiTagStore implements TagStorage {
                 .build();
     }
 
-    private String generateTagLog(Set<Tag> tags) {
-        StringBuffer log = new StringBuffer();
-        boolean needSeparator = false;
-        for (Iterator<Tag> iterator = tags.iterator(); iterator.hasNext(); ) {
-            Tag tag = iterator.next();
-            String key = tag.getKey();
-            String value = tag.getValue();
-            if (needSeparator) {
-                log.append('|');
-            } else {
-                needSeparator = true;
-            }
-
-            log.append(key);
-            log.append('=');
-            log.append(value);
-        }
-
-        return log.toString();
-    }
     @Override
     public void storeTags(Sample sample, String tenantID) {
         String key = sample.getMetric().getKey();;
-        String tagLog = generateTagLog(sample.getMetric().getExternalTags());
+
+        // Get old value first
+        String oldLog = retrieveStringLog(sample.getMetric(), tenantID, sample.getTime().getEpochSecond() * 1000);
+
+        String tagLog = combineTagsToString(sample.getMetric().getExternalTags(), oldLog);
 
         String cacheEntry = tagCache.getIfPresent(generateCacheKey(key, tenantID));
 
@@ -137,123 +120,110 @@ public class LokiTagStore implements TagStorage {
         }
     }
 
-    private String generateCacheKey(String key, String tenantID) {
-        if (tenantID != null && tenantID.trim().length() > 0) {
-            return key + "|" + tenantID; // TODO: verify the '|' is not a valid char for the key or tenant ID
-        } else {
-            return key; // No tenanting
-        }
-    }
-
     @Override
-    public Metric retrieveTags(Metric metric, String tenantID, long endTimeEpochMillis) {
-        // Get from the cache if it's in there
-        String cacheEntry = tagCache.getIfPresent(generateCacheKey(metric.getKey(), tenantID));
+    public Metric retrieveTags(Metric metric, String tenantID) {
+        final long endTimeEpochMillis = System.currentTimeMillis();
+        String stringLog = retrieveStringLog(metric, tenantID, endTimeEpochMillis);
 
-        if (cacheEntry == null) {
-            // Need to get from Loki itself
-            HttpUrl.Builder urlBuilder = HttpUrl.parse(lokiReadUrl).newBuilder();
-            urlBuilder.addQueryParameter("query", "{key=\"" + metric.getKey() + "\"}");
-            urlBuilder.addQueryParameter("limit", "1"); // Only want the latest
-            String lokiUrl = urlBuilder.build().toString();
-
-            Request.Builder builder = new Request.Builder()
-                    .url(lokiUrl)
-                    .header("Content-Type", "application/json");  // Todo: is this line necessary?
-
-            // Add the OrgId header if set
-            if (tenantID != null && tenantID.trim().length() > 0) {
-                builder.addHeader(X_SCOPE_ORG_ID_HEADER, tenantID);
-            }
-
-            // Set the end time of the query to be that of the metric
-            builder.addHeader(LOKI_END_TIME_HEADER, String.valueOf(endTimeEpochMillis) + "0000"); // Millis to nanos
-            // Set the start time of the query to 30 days before the metric. Should be entries within that window
-            long requestStartTime = endTimeEpochMillis - THIRTY_DAYS_MILLIS;
-            builder.addHeader(LOKI_START_TIME_HEADER, String.valueOf(requestStartTime) + "0000"); // Millis to nanos
-
-            Request request = builder.build();
-
-
-            try (Response response = client.newCall(request).execute()) {
-                try(ResponseBody responseBody = response.body()) {
-                    if (!response.isSuccessful()) {
-                        String bodyMsg = "";
-                        if (responseBody != null) {
-                            bodyMsg = responseBody.string();
-                        }
-                        throw new StorageException(String.format("Call to %s failed: response code:%s, response message:%s, bodyMessage:%s", lokiUrl, response.code(), response.message(), bodyMsg));
-                    }
-                    if (responseBody != null) {
-                        String responseStr = responseBody.string();
-                        return convertLokiToTags(metric, responseStr);
-                    } else {
-                        LOG.error(String.format("Call to %s delivered no body.", lokiUrl));
-                    }
-                }
-            } catch (IOException | StorageException e) {
-                LOG.error(String.format("Call to %s failed.", lokiWriteUrl), e);
-            }
-
+        if (stringLog != null && !stringLog.isEmpty()) {
+            return convertEncodedStringToTags(metric, stringLog);
         }
 
         // Failure to get the loki tags, return what we started with
         return metric;
     }
 
-    private Metric convertLokiToTags(Metric metric, String jsonStr) {
+    private String retrieveStringLog(Metric metric, String tenantID, long endTimeEpochMillis) {
+        // Get from the cache if it's in there
+        String cacheEntry = tagCache.getIfPresent(generateCacheKey(metric.getKey(), tenantID));
+
+        if (cacheEntry != null) {
+            return cacheEntry;
+        }
+
+        // Need to get from Loki itself
+        HttpUrl.Builder urlBuilder = HttpUrl.parse(lokiReadUrl).newBuilder();
+        urlBuilder.addQueryParameter("query", "{key=\"" + metric.getKey() + "\"}");
+        urlBuilder.addQueryParameter("limit", "1"); // Only want the latest
+        String lokiUrl = urlBuilder.build().toString();
+
+        Request.Builder builder = new Request.Builder()
+                .url(lokiUrl)
+                .header("Content-Type", "application/json");  // Todo: is this line necessary?
+
+        // Add the OrgId header if set
+        if (tenantID != null && tenantID.trim().length() > 0) {
+            builder.addHeader(X_SCOPE_ORG_ID_HEADER, tenantID);
+        }
+
+        // Set the end time of the query to be that of the metric
+        builder.addHeader(LOKI_END_TIME_HEADER, String.valueOf(endTimeEpochMillis) + "0000"); // Millis to nanos
+        // Set the start time of the query to 30 days before the metric. Should be entries within that window
+        long requestStartTime = endTimeEpochMillis - THIRTY_DAYS_MILLIS;
+        builder.addHeader(LOKI_START_TIME_HEADER, String.valueOf(requestStartTime) + "0000"); // Millis to nanos
+
+        Request request = builder.build();
+
+        try (Response response = client.newCall(request).execute()) {
+            try(ResponseBody responseBody = response.body()) {
+                if (!response.isSuccessful()) {
+                    String bodyMsg = "";
+                    if (responseBody != null) {
+                        bodyMsg = responseBody.string();
+                    }
+                    throw new StorageException(String.format("Call to %s failed: response code:%s, response message:%s, bodyMessage:%s", lokiUrl, response.code(), response.message(), bodyMsg));
+                }
+
+                if (responseBody != null) {
+                    return convertLokiJsonToString(responseBody.string());
+                } else {
+                    LOG.error(String.format("Call to %s delivered no body.", lokiUrl));
+                }
+            }
+        } catch (IOException | StorageException e) {
+            LOG.error(String.format("Call to %s failed.", lokiWriteUrl), e);
+        }
+        return null;
+    }
+
+    private String convertLokiJsonToString(String jsonStr) {
         JSONObject json = new JSONObject(jsonStr);
         JSONObject lokiData = json.getJSONObject("data");
 
         if (lokiData == null) {
             LOG.error("Invalid Loki json - no data");
-            return metric;
+            return null;
         }
         JSONArray resultArray = lokiData.getJSONArray("result");
         if (resultArray == null || resultArray.length() == 0) {
             LOG.error("Invalid Loki json - no results");
-            return metric;
+            return null;
         }
 
         JSONObject firstResult = resultArray.getJSONObject(0);
         if (firstResult == null) {
             LOG.error("Invalid Loki json - empty result");
-            return metric;
+            return null;
         }
 
         JSONArray values = firstResult.getJSONArray("values");
         if (values == null || values.length() == 0) {
             LOG.error("Invalid Loki json - no values");
-            return metric;
+            return null;
         }
 
         JSONArray valueSet = values.getJSONArray(0); // We should only be getting the first
         if (valueSet == null || valueSet.length() < 2) {
             LOG.error("Invalid Loki json - bad value pair");
-            return metric;
+            return null;
         }
 
         // Timestamp is the first. the value is the second
-        String encodedTags = valueSet.getString(1);
-
-        String[] tagPairs = encodedTags.split("\\|");
-        Set<Tag> tags = metric.getExternalTags();
-
-        ImmutableMetric.MetricBuilder metricBuilder = ImmutableMetric.builder();
-        metricBuilder.intrinsicTags(metric.getIntrinsicTags());
-        metricBuilder.metaTags(metric.getMetaTags());
-
-        for (int i = 0; i < tagPairs.length; i++) {
-            String tagString = tagPairs[i];
-            String[] separatedTag = tagString.split("=");
-            if (separatedTag.length != 2) {
-                LOG.error("Invalid loki json - error parsing tags: " + tagString);
-            } else {
-                metricBuilder.externalTag(separatedTag[0], separatedTag[1]);
-            }
-        }
-        Metric newMetric = metricBuilder.build();
-
-        return newMetric;
+        return valueSet.getString(1);
     }
+
+    private Metric convertEncodedStringToTags(Metric metric, String encodedTags) {
+        return insertStringTagsInMetric(metric, encodedTags);
+    }
+
 }

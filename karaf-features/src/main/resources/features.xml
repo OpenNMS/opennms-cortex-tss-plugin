@@ -11,6 +11,9 @@
         <bundle dependency="true">mvn:org.xerial.snappy/snappy-java/${snappy.version}</bundle>
         <bundle dependency="true">mvn:io.dropwizard.metrics/metrics-core/${metrics.version}</bundle>
         <bundle dependency="true">mvn:org.json/json/${json.version}</bundle>
+        <bundle dependency="true">mvn:org.apache.commons/commons-pool2/${pool2.version}</bundle>
+        <bundle dependency="true">mvn:redis.clients/jedis/${jedis.version}</bundle>
+        <bundle dependency="true">mvn:com.google.code.gson/gson/${gson.version}</bundle>
         <bundle dependency="true">mvn:org.opennms.plugin.timeseries.cortex.wrap/resilience4j/${project.version}</bundle>
         <bundle>mvn:org.opennms.plugins.timeseries/cortex-plugin/${project.version}</bundle>
     </feature>

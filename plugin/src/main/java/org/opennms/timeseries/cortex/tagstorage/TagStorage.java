@@ -1,9 +1,9 @@
-package org.opennms.timeseries.cortex;
+package org.opennms.timeseries.cortex.tagstorage;
 
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
 
 public interface TagStorage {
     void storeTags(Sample sample, String tenantID);
-    Metric retrieveTags(Metric metric, String tenantID, long endTimeEpochMillis);
+    Metric retrieveTags(Metric metric, String tenantID);
 }
