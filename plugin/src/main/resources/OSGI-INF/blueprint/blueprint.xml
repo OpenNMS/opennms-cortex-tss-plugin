@@ -33,15 +33,13 @@
     </bean>
 
     <!--Key-value store -->
-    <reference id="keyValueStore" interface="org.opennms.integration.api.v1.distributed.KeyValueStore" />
+    <reference id="keyValueStore" interface="org.opennms.integration.api.v1.distributed.KeyValueStore" availability="optional"/>
 
     <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS" destroy-method="destroy">
         <argument ref="cortexTssConfig" />
         <argument ref="keyValueStore" />
     </bean>
 
-    <service ref="timeSeriesStorage" interface="org.opennms.integration.api.v1.distributed.KeyValueStore" />
-    <service ref="timeSeriesStorage" interface="org.opennms.timeseries.cortex.CortexTSS" />
     <service ref="timeSeriesStorage" interface="org.opennms.integration.api.v1.timeseries.TimeSeriesStorage">
         <service-properties>
             <entry key="registration.export" value="true" />
