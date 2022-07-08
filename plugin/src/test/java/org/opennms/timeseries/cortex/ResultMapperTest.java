@@ -1,6 +1,7 @@
 package org.opennms.timeseries.cortex;
 
 import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.mock;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -13,6 +14,7 @@ import java.util.stream.Stream;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
@@ -41,7 +43,8 @@ public class ResultMapperTest {
     @Test
     public void shouldMapSeriesQueryResult() throws IOException, URISyntaxException {
         String json = readStringFromFile("seriesQueryResult.json");
-        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json);
+        KeyValueStore store = mock(KeyValueStore.class);
+        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, store);
         assertEquals(1, metrics.size());
         assertEquals(expectedMetric,metrics.get(0));
     }

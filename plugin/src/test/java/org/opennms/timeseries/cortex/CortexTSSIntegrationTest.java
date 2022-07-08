@@ -9,13 +9,19 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.AbstractStorageIntegrationTest;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
@@ -32,6 +38,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.DockerComposeContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.shaded.org.apache.commons.lang.NotImplementedException;
 
 public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
@@ -46,7 +53,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
     @Before
     public void setUp() throws Exception {
-        cortexTss = new CortexTSS(new CortexTSSConfig());
+        cortexTss = new CortexTSS(new CortexTSSConfig(), new KVStoreMock());
         super.setUp();
     }
 
@@ -168,5 +175,100 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
     protected void waitForPersistingChanges() throws Exception {
         // The writes are async. Therefore we need to wait a bit before reading...
         Thread.sleep(1000);
+    }
+
+    public class KVStoreMock implements KeyValueStore {
+        private Map<String, Object> kvStore = new HashMap<>();
+
+        @Override
+        public long put(String key, Object value, String context) {
+            kvStore.put(key, value);
+            return 0L;
+        }
+
+        @Override
+        public long put(String key, Object value, String context, Integer ttlInSeconds) {
+            kvStore.put(key, value);
+            return 0;
+        }
+
+        @Override
+        public Optional get(String key, String context) {
+            if (kvStore.get(key) != null)
+                return Optional.of(kvStore.get(key));
+            else return Optional.empty();
+        }
+
+        @Override
+        public Optional getIfStale(String key, String context, long timestamp) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public OptionalLong getLastUpdated(String key, String context) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public Map enumerateContext(String context) {
+            return kvStore;
+        }
+
+        @Override
+        public void delete(String key, String context) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public void truncateContext(String context) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public CompletableFuture<Long> putAsync(String key, Object value, String context) {
+            kvStore.put(key, value);
+            return CompletableFuture.completedFuture(0L);
+        }
+
+        @Override
+        public CompletableFuture<Long> putAsync(String key, Object value, String context, Integer ttlInSeconds) {
+            kvStore.put(key, value);
+            return CompletableFuture.completedFuture(0L);
+        }
+
+        @Override
+        public CompletableFuture<Optional> getAsync(String key, String context) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public CompletableFuture<Optional> getIfStaleAsync(String key, String context, long timestamp) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public CompletableFuture<OptionalLong> getLastUpdatedAsync(String key, String context) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public String getName() {
+            return this.getClass().getCanonicalName();
+        }
+
+        @Override
+        public CompletableFuture<Map> enumerateContextAsync(String context) {
+            return CompletableFuture.completedFuture(kvStore);
+        }
+
+        @Override
+        public CompletableFuture<Void> deleteAsync(String key, String context) {
+            throw new NotImplementedException();
+        }
+
+        @Override
+        public CompletableFuture<Void> truncateContextAsync(String context) {
+            throw new NotImplementedException();
+        }
     }
 }

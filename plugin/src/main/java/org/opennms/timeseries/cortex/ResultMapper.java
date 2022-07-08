@@ -1,9 +1,5 @@
 package org.opennms.timeseries.cortex;
 
-import static org.opennms.timeseries.cortex.CortexTSS.INTRINSIC_TAG_NAMES;
-import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_LABEL;
-import static org.opennms.timeseries.cortex.CortexTSS.sanitizeLabelValue;
-
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.List;
@@ -15,6 +11,7 @@ import java.util.stream.StreamSupport;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
@@ -23,7 +20,10 @@ import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableSample;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTag;
 
-import prometheus.PrometheusTypes;
+import static org.opennms.timeseries.cortex.CortexTSS.CORTEX_TSS;
+import static org.opennms.timeseries.cortex.CortexTSS.INTRINSIC_TAG_NAMES;
+import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_LABEL;
+
 
 public class ResultMapper {
 
@@ -54,15 +54,15 @@ public class ResultMapper {
                 .build();
     }
 
-    public static List<Metric> fromSeriesQueryResult(final String queryResult) {
+    public static List<Metric> fromSeriesQueryResult(final String queryResult, final KeyValueStore store) {
         return new JSONObject(queryResult)
                 .getJSONArray("data")
                 .toList()
-                .stream().map(j -> toMetricFromMap(((Map<String, String>)j)))
+                .stream().map(j -> toMetricFromMap(((Map<String, String>) j), store))
                 .collect(Collectors.toList());
     }
 
-    public static <T> Metric toMetricFromMap(Map<String, T> tags) {
+    public static <T> Metric toMetricFromMap(Map<String, T> tags, final KeyValueStore store) {
         ImmutableMetric.MetricBuilder metric = ImmutableMetric.builder();
 
         for (Map.Entry<String, T> entry : tags.entrySet()) {
@@ -71,37 +71,29 @@ public class ResultMapper {
 
             if (METRIC_NAME_LABEL.equals(labelName)) {
                 metric.intrinsicTag(IntrinsicTagNames.name, labelValue);
-            } else if (labelName.startsWith("_ext")) {
-                metric.externalTag(externalLabelToTag(labelValue));
             } else if (INTRINSIC_TAG_NAMES.contains(labelName)) {
                 metric.intrinsicTag(labelName, labelValue);
             } else  {
                 metric.metaTag(labelName, labelValue);
             }
         }
-        return metric.build();
+        return appendExternalTagsToMetric(metric.build(), store);
     }
 
     static <T> Stream<T> iteratorToFiniteStream(final Iterator<T> iterator) {
         return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, 0), false);
     }
 
-    static PrometheusTypes.Label.Builder externalTagToLabel(final Tag tag) {
-        // _ext_%hash% = %key%=%value%
-        // %hash% is a hash of the value - the key contains special characters we want to preserve, so we place it in the value instead
-        String value = tag.getKey() + "=" + tag.getValue();
-        String name = "_ext_" + Math.abs(value.hashCode());
-        return PrometheusTypes.Label.newBuilder()
-                .setName(name)
-                .setValue(sanitizeLabelValue(value));
-    }
-
-    static Tag externalLabelToTag(final String labelValue) {
-        // _ext_%hash% = %key%=%value%
-        // %hash% is a hash of the value - the key contains special characters we want to preserve, so we place it in the value instead
-        String[] keyValue = labelValue.split("=");
-        String key = keyValue[0];
-        String value = keyValue[1];
-        return new ImmutableTag(key, value);
+    static Metric appendExternalTagsToMetric(final Metric metric, final KeyValueStore store) {
+        var externalTagsRaw = store.get(metric.getKey(), CORTEX_TSS);
+        if (externalTagsRaw.isPresent()) {
+            final ImmutableMetric.MetricBuilder builder = new ImmutableMetric.MetricBuilder();
+            builder.intrinsicTags(metric.getIntrinsicTags());
+            builder.metaTags(metric.getMetaTags());
+            new JSONObject(externalTagsRaw.get().toString()).toMap().forEach((k, v) -> {
+                builder.externalTag(new ImmutableTag(k, v.toString()));
+            });
+            return builder.build();
+        } else return metric;
     }
 }
