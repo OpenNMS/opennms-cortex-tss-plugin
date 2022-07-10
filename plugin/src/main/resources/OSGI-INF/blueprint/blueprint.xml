@@ -14,7 +14,7 @@
             <cm:property name="writeTimeoutInMs" value="1000" />
             <cm:property name="readTimeoutInMs" value="1000" />
             <cm:property name="metricCacheSize" value="1000" />
-            <cm:property name="externalCacheSize" value="1000" />
+            <cm:property name="externalTagsCache" value="1000" />
             <cm:property name="bulkheadMaxWaitDuration" value="9223372036854775807" />
             <cm:property name="organizationId" value="" />
         </cm:default-properties>
@@ -40,6 +40,7 @@
         <argument ref="keyValueStore" />
     </bean>
 
+    <service ref="timeSeriesStorage" interface="org.opennms.timeseries.cortex.CortexTSS" />
     <service ref="timeSeriesStorage" interface="org.opennms.integration.api.v1.timeseries.TimeSeriesStorage">
         <service-properties>
             <entry key="registration.export" value="true" />

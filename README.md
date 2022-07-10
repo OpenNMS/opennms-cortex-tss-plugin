@@ -46,7 +46,7 @@ property-set maxConcurrentHttpConnections 100
 property-set writeTimeoutInMs 1000
 property-set readTimeoutInMs 1000
 property-set metricCacheSize 1000
-property-set externalCacheSize 1000
+property-set externalTagsCacheSize 1000
 property-set bulkheadMaxWaitDurationInMs 9223372036854775807
 
 config:update

@@ -141,7 +141,7 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Meter extTagsModified = metrics.meter("extTagsModified");
     private final Meter extTagsCacheUsed = metrics.meter("extTagsCacheUsed");
     private final Meter extTagsCacheMissed = metrics.meter("extTagsCacheMissed");
-
+    private final Meter extTagPutTransactionFailed = metrics.meter("extTagPutTransactionFailed");
 
     public CortexTSS(final CortexTSSConfig config, final KeyValueStore keyValueStore) {
         this.config = Objects.requireNonNull(config);
@@ -157,7 +157,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 .connectionPool(connectionPool)
                 .build();
 
-        this.externalTagsCache = CacheBuilder.newBuilder().maximumSize(config.getExternalCacheSize()).build();
+        this.externalTagsCache = CacheBuilder.newBuilder().maximumSize(config.getExternalTagsCacheSize()).build();
         this.kvStore = keyValueStore;
 
         this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
@@ -244,7 +244,7 @@ public class CortexTSS implements TimeSeriesStorage {
         JSONObject jsonMetrics = null;
         JSONObject jsonNewMetric = new JSONObject();
 
-        if (config.getExternalCacheSize() > 0 && externalTags != null) {
+        if (config.getExternalTagsCacheSize() > 0 && externalTags != null) {
             jsonMetrics = new JSONObject(externalTags);
             for (Tag tag : s.getMetric().getExternalTags()) {
                 if (!jsonMetrics.has(tag.getKey())) {
@@ -253,7 +253,13 @@ public class CortexTSS implements TimeSeriesStorage {
                 }
             }
             if (needUpsert) {
-                kvStore.putAsync(key, jsonMetrics.toString(), CORTEX_TSS);
+                kvStore.putAsync(key, jsonMetrics.toString(), CORTEX_TSS)
+                        .whenComplete((res,ex)->{
+                            if(ex != null){
+                                LOG.debug("Exception occurred persisting external tag for metric: " + key );
+                                extTagPutTransactionFailed.mark();
+                            }
+                        });
                 extTagsModified.mark();
             }
             extTagsCacheUsed.mark();
@@ -268,7 +274,14 @@ public class CortexTSS implements TimeSeriesStorage {
                     }
                 }
                 if (needUpsert) {
-                    kvStore.putAsync(key, jsonMetrics.toString(), CORTEX_TSS);
+                    kvStore.putAsync(key, jsonMetrics.toString(), CORTEX_TSS)
+                            .whenComplete((res,ex)->{
+                                if(ex != null){
+                                    LOG.debug("Exception occurred persisting external tag for metric: " + key );
+                                    extTagPutTransactionFailed.mark();
+                                }
+                            });
+                    externalTagsCache.put(key, jsonMetrics.toString());
                     extTagsModified.mark();
                 }
                 //missed caching this record
@@ -277,7 +290,13 @@ public class CortexTSS implements TimeSeriesStorage {
                 for (Tag tag : s.getMetric().getExternalTags()) {
                     jsonNewMetric.put(tag.getKey(), tag.getValue());
                 }
-                kvStore.putAsync(key, jsonNewMetric.toString(), CORTEX_TSS);
+                kvStore.putAsync(key, jsonNewMetric.toString(), CORTEX_TSS)
+                        .whenComplete((res,ex)->{
+                            if(ex != null){
+                                LOG.debug("Exception occurred persisting external tag for metric: " + key );
+                                extTagPutTransactionFailed.mark();
+                            }
+                        });
                 externalTagsCache.put(key, jsonNewMetric.toString());
             }
         }

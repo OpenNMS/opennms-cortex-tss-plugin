@@ -15,7 +15,6 @@ import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
-import org.opennms.integration.api.v1.timeseries.Tag;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableSample;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTag;
@@ -58,11 +57,11 @@ public class ResultMapper {
         return new JSONObject(queryResult)
                 .getJSONArray("data")
                 .toList()
-                .stream().map(j -> toMetricFromMap(((Map<String, String>) j), store))
+                .stream().map(j -> appendExternalTagsToMetric(toMetricFromMap(((Map<String, String>) j)), store))
                 .collect(Collectors.toList());
     }
 
-    public static <T> Metric toMetricFromMap(Map<String, T> tags, final KeyValueStore store) {
+    public static <T> Metric toMetricFromMap(Map<String, T> tags) {
         ImmutableMetric.MetricBuilder metric = ImmutableMetric.builder();
 
         for (Map.Entry<String, T> entry : tags.entrySet()) {
@@ -77,7 +76,7 @@ public class ResultMapper {
                 metric.metaTag(labelName, labelValue);
             }
         }
-        return appendExternalTagsToMetric(metric.build(), store);
+        return metric.build();
     }
 
     static <T> Stream<T> iteratorToFiniteStream(final Iterator<T> iterator) {
