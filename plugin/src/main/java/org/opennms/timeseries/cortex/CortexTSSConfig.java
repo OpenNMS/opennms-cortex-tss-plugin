@@ -10,6 +10,7 @@ public class CortexTSSConfig {
     private final long writeTimeoutInMs;
     private final long readTimeoutInMs;
     private final long metricCacheSize;
+    private final long externalTagsCacheSize;
     private final long bulkheadMaxWaitDurationInMs;
     private final String organizationId;
     private final boolean hasOrganizationId;
@@ -25,6 +26,7 @@ public class CortexTSSConfig {
         this.writeTimeoutInMs = builder.writeTimeoutInMs;
         this.readTimeoutInMs = builder.readTimeoutInMs;
         this.metricCacheSize = builder.metricCacheSize;
+        this.externalTagsCacheSize = builder.externalTagsCacheSize;
         this.bulkheadMaxWaitDurationInMs = builder.bulkheadMaxWaitDurationInMs;
         this.organizationId = builder.organizationId;
         this.hasOrganizationId = organizationId != null && organizationId.trim().length() > 0;
@@ -38,6 +40,7 @@ public class CortexTSSConfig {
             final long writeTimeoutInMs,
             final long readTimeoutInMs,
             final long metricCacheSize,
+            final long externalTagsCacheSize,
             final long bulkheadMaxWaitDurationInMs,
             final String organizationId) {
         this(builder()
@@ -47,6 +50,7 @@ public class CortexTSSConfig {
                 .writeTimeoutInMs(writeTimeoutInMs)
                 .readTimeoutInMs(readTimeoutInMs)
                 .metricCacheSize(metricCacheSize)
+                .externalCacheSize(externalTagsCacheSize)
                 .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs)
                 .organizationId(organizationId));
     }
@@ -75,6 +79,8 @@ public class CortexTSSConfig {
         return metricCacheSize;
     }
 
+    public long getExternalTagsCacheSize() { return externalTagsCacheSize; }
+
     public long getBulkheadMaxWaitDurationInMs() {
         return bulkheadMaxWaitDurationInMs;
     }
@@ -98,6 +104,7 @@ public class CortexTSSConfig {
         private long writeTimeoutInMs = 1000;
         private long readTimeoutInMs = 1000;
         private long metricCacheSize = 1000;
+        private long externalTagsCacheSize = 1000;
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;
         private String organizationId = null;
 
@@ -131,6 +138,11 @@ public class CortexTSSConfig {
             return this;
         }
 
+        public Builder externalCacheSize(final long externalTagsCacheSize) {
+            this.externalTagsCacheSize = externalTagsCacheSize;
+            return this;
+        }
+
         public Builder bulkheadMaxWaitDurationInMs(final long bulkheadMaxWaitDurationInMs) {
             this.bulkheadMaxWaitDurationInMs = bulkheadMaxWaitDurationInMs;
             return this;
@@ -155,6 +167,7 @@ public class CortexTSSConfig {
                 .add("writeTimeoutInMs=" + writeTimeoutInMs)
                 .add("readTimeoutInMs=" + readTimeoutInMs)
                 .add("metricCacheSize=" + metricCacheSize)
+                .add("externalCacheSize=" + externalTagsCacheSize)
                 .add("bulkheadMaxWaitDurationInMs=" + bulkheadMaxWaitDurationInMs)
                 .add("organizationId=" + organizationId)
                 .toString();

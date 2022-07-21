@@ -28,7 +28,6 @@
 
 package org.opennms.timeseries.cortex;
 
-import static org.opennms.timeseries.cortex.ResultMapper.externalTagToLabel;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -46,7 +45,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.Map;
 
+import org.json.JSONObject;
+import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
 import org.opennms.integration.api.v1.timeseries.MetaTagNames;
@@ -133,7 +135,15 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Bulkhead asyncHttpCallsBulkhead;
     private final CortexTSSConfig config;
 
-    public CortexTSS(final CortexTSSConfig config) {
+    public static final String CORTEX_TSS = "CORTEX_TSS";
+    private final KeyValueStore kvStore;
+    private final Cache<String, String> externalTagsCache;
+    private final Meter extTagsModified = metrics.meter("extTagsModified");
+    private final Meter extTagsCacheUsed = metrics.meter("extTagsCacheUsed");
+    private final Meter extTagsCacheMissed = metrics.meter("extTagsCacheMissed");
+    private final Meter extTagPutTransactionFailed = metrics.meter("extTagPutTransactionFailed");
+
+    public CortexTSS(final CortexTSSConfig config, final KeyValueStore keyValueStore) {
         this.config = Objects.requireNonNull(config);
         ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
         Dispatcher dispatcher = new Dispatcher();
@@ -146,6 +156,9 @@ public class CortexTSS implements TimeSeriesStorage {
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .build();
+
+        this.externalTagsCache = CacheBuilder.newBuilder().maximumSize(config.getExternalTagsCacheSize()).build();
+        this.kvStore = keyValueStore;
 
         this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
 
@@ -163,6 +176,9 @@ public class CortexTSS implements TimeSeriesStorage {
         metrics.register("runningCallsCount", (Gauge<Integer>) () -> client.dispatcher().runningCallsCount());
         metrics.register("availableConcurrentCalls", (Gauge<Integer>) () -> asyncHttpCallsBulkhead.getMetrics().getAvailableConcurrentCalls());
         metrics.register("maxAllowedConcurrentCalls", (Gauge<Integer>) () -> asyncHttpCallsBulkhead.getMetrics().getMaxAllowedConcurrentCalls());
+
+        this.kvStore.enumerateContextAsync(CORTEX_TSS).thenAccept(map -> externalTagsCache.putAll((Map<String, String>) map));
+
     }
 
     @Override
@@ -176,7 +192,13 @@ public class CortexTSS implements TimeSeriesStorage {
                 .collect(Collectors.toList());
 
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
-        samplesSorted.forEach(s -> writeBuilder.addTimeseries(toPrometheusTimeSeries(s)));
+        samplesSorted.forEach(s -> {
+
+            writeBuilder.addTimeseries(toPrometheusTimeSeries(s));
+            persistExternalTags(s);
+        });
+
+
         PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
 
         // Compress the write request using Snappy
@@ -202,7 +224,7 @@ public class CortexTSS implements TimeSeriesStorage {
         final Request request = builder.build();
 
         LOG.trace("Writing: {}", writeRequest);
-        asyncHttpCallsBulkhead.executeCompletionStage(() -> executeAsync(request)).whenComplete((r,ex) -> {
+        asyncHttpCallsBulkhead.executeCompletionStage(() -> executeAsync(request)).whenComplete((r, ex) -> {
             if (ex == null) {
                 samplesWritten.mark(samplesSorted.size());
             } else {
@@ -211,6 +233,73 @@ public class CortexTSS implements TimeSeriesStorage {
                 LOG.error("Error occurred while storing samples, sample will be lost.", ex);
             }
         });
+    }
+
+    private void persistExternalTags(final Sample s) {
+        // save external tags on a separate database
+        String key = s.getMetric().getKey();
+        var externalTags = externalTagsCache.getIfPresent(key);
+        boolean needUpsert = false;
+
+        JSONObject jsonMetrics = null;
+        JSONObject jsonNewMetric = new JSONObject();
+
+        if (config.getExternalTagsCacheSize() > 0 && externalTags != null) {
+            jsonMetrics = new JSONObject(externalTags);
+            for (Tag tag : s.getMetric().getExternalTags()) {
+                if (!jsonMetrics.has(tag.getKey())) {
+                    jsonMetrics.put(tag.getKey(), tag.getValue());
+                    needUpsert = true;
+                }
+            }
+            if (needUpsert) {
+                kvStore.putAsync(key, jsonMetrics.toString(), CORTEX_TSS)
+                        .whenComplete((res,ex)->{
+                            if(ex != null){
+                                LOG.debug("Exception occurred persisting external tag for metric: " + key );
+                                extTagPutTransactionFailed.mark();
+                            }
+                        });
+                extTagsModified.mark();
+            }
+            extTagsCacheUsed.mark();
+        } else {
+            var externalMetricFromDb = kvStore.get(s.getMetric().getKey(), CORTEX_TSS);
+            if (externalMetricFromDb.isPresent()) {
+                jsonMetrics = new JSONObject(externalMetricFromDb.get().toString());
+                for (Tag tag : s.getMetric().getExternalTags()) {
+                    if (!jsonMetrics.has(tag.getKey())) {
+                        jsonMetrics.put(tag.getKey(), tag.getValue());
+                        needUpsert = true;
+                    }
+                }
+                if (needUpsert) {
+                    kvStore.putAsync(key, jsonMetrics.toString(), CORTEX_TSS)
+                            .whenComplete((res,ex)->{
+                                if(ex != null){
+                                    LOG.debug("Exception occurred persisting external tag for metric: " + key );
+                                    extTagPutTransactionFailed.mark();
+                                }
+                            });
+                    externalTagsCache.put(key, jsonMetrics.toString());
+                    extTagsModified.mark();
+                }
+                //missed caching this record
+                extTagsCacheMissed.mark();
+            } else {
+                for (Tag tag : s.getMetric().getExternalTags()) {
+                    jsonNewMetric.put(tag.getKey(), tag.getValue());
+                }
+                kvStore.putAsync(key, jsonNewMetric.toString(), CORTEX_TSS)
+                        .whenComplete((res,ex)->{
+                            if(ex != null){
+                                LOG.debug("Exception occurred persisting external tag for metric: " + key );
+                                extTagPutTransactionFailed.mark();
+                            }
+                        });
+                externalTagsCache.put(key, jsonNewMetric.toString());
+            }
+        }
     }
 
     public CompletableFuture<Void> executeAsync(Request request) {
@@ -262,10 +351,7 @@ public class CortexTSS implements TimeSeriesStorage {
                                 .setValue(sanitizeLabelValue(tag.getValue())));
                     }
                 });
-        // Convert external tags
-        for(Tag tag : sample.getMetric().getExternalTags()){
-            builder.addLabels(externalTagToLabel(tag));
-        }
+
 
         // Add the sample timestamp & value
         builder.addSamples(PrometheusTypes.Sample.newBuilder()
@@ -324,7 +410,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 config.getReadUrl(),
                 tagMatchersToQuery(tagMatchers));
         String json = makeCallToQueryApi(url, clientID);
-        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json);
+        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
         metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
         return metrics;
     }

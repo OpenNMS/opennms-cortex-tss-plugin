@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
 import org.opennms.integration.api.v1.timeseries.Metric;
 import org.opennms.integration.api.v1.timeseries.Sample;
@@ -13,10 +14,13 @@ import org.opennms.integration.api.v1.timeseries.StorageException;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableSample;
 
+import static org.mockito.Mockito.mock;
+
 public class PushSample {
     public static void main(String[] args) throws StorageException {
         Random random = new Random(42);
-        CortexTSS cortexTss = new CortexTSS(CortexTSSConfig.builder().build());
+        KeyValueStore store = mock(KeyValueStore.class);
+        CortexTSS cortexTss = new CortexTSS(CortexTSSConfig.builder().build(), store);
         Metric metric = ImmutableMetric.builder()
                 .intrinsicTag(IntrinsicTagNames.resourceId, "response:127.0.0.1:icmp")
                 .intrinsicTag(IntrinsicTagNames.name, "icmp")

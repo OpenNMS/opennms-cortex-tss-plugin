@@ -9,13 +9,19 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.AbstractStorageIntegrationTest;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
@@ -32,6 +38,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.DockerComposeContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.shaded.org.apache.commons.lang.NotImplementedException;
 
 public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
@@ -46,7 +53,7 @@ public class CortexTSSIntegrationTest extends AbstractStorageIntegrationTest {
 
     @Before
     public void setUp() throws Exception {
-        cortexTss = new CortexTSS(new CortexTSSConfig());
+        cortexTss = new CortexTSS(new CortexTSSConfig(), new KVStoreMock());
         super.setUp();
     }
 

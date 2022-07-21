@@ -1,6 +1,7 @@
 package org.opennms.timeseries.cortex;
 
 import static org.junit.Assert.assertEquals;
+import static org.opennms.timeseries.cortex.CortexTSS.CORTEX_TSS;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -11,6 +12,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.stream.Stream;
 
+import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
 import org.opennms.integration.api.v1.timeseries.IntrinsicTagNames;
@@ -21,6 +23,7 @@ import org.opennms.integration.api.v1.timeseries.immutables.ImmutableMetric;
 public class ResultMapperTest {
 
     private Metric expectedMetric;
+    private KVStoreMock kvstore;
 
     @Before
     public void setUp(){
@@ -36,12 +39,14 @@ public class ResultMapperTest {
                 .metaTag("host", "myHost1")
                 .metaTag("mtype", "counter")
                 .build();
+        kvstore = new KVStoreMock();
     }
 
     @Test
     public void shouldMapSeriesQueryResult() throws IOException, URISyntaxException {
         String json = readStringFromFile("seriesQueryResult.json");
-        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json);
+        kvstore.put(expectedMetric.getKey(), new JSONObject().put("key", "value"), CORTEX_TSS);
+        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvstore);
         assertEquals(1, metrics.size());
         assertEquals(expectedMetric,metrics.get(0));
     }
@@ -55,6 +60,26 @@ public class ResultMapperTest {
         assertEquals(Instant.ofEpochSecond(1602783564), samples.get(0).getTime());
         assertEquals((Double)42.3, samples.get(0).getValue());
         assertEquals(60, samples.size());
+    }
+
+    @Test
+    public void testAppendExternalTagsToMetric() throws IOException, URISyntaxException {
+        String json = readStringFromFile("seriesQueryResult.json");
+        kvstore.put(expectedMetric.getKey(),
+                new JSONObject()
+                        .put("key1", "value1")
+                        .put("key2", "value2")
+                        .put("key3", "value3"),
+                CORTEX_TSS);
+        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvstore);
+        assertEquals(1, metrics.size());
+        assertEquals(3,metrics.get(0).getExternalTags().size());
+        assertEquals("value3",metrics.get(0).getExternalTags()
+                .stream()
+                .filter(tag-> tag.getKey().equals("key3"))
+                .findFirst()
+                .get()
+                .getValue());
     }
 
     private String readStringFromFile(final String fileName) throws IOException, URISyntaxException {
