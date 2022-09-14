@@ -7,6 +7,60 @@
     <packaging>pom</packaging>
     <version>2.0.0</version>
 
+    <description>Time-Series Storage Plugin for OpenNMS</description>
+    <url>https://github.com/OpenNMS/opennms-cortex-tss-plugin/</url>
+
+    <licenses>
+        <license>
+            <name>GNU Affero General Public License</name>
+            <url>http://www.gnu.org/licenses/agpl.html</url>
+        </license>
+    </licenses>
+
+    <scm>
+        <url>https://github.com/OpenNMS/opennms-cortex-tss-plugin</url>
+        <connection>scm:git:git@github.com:OpenNMS/opennms-cortex-tss-plugin.git</connection>
+        <tag>HEAD</tag>
+    </scm>
+
+    <developers>
+        <developer>
+            <id>RangerRick</id>
+            <name>Benjamin Reed</name>
+            <email>ranger@opennms.com</email>
+        </developer>
+        <developer>
+            <id>cpape</id>
+            <name>Christian Pape</name>
+            <email>Christian.Pape@informatik.hs-fulda.de</email>
+        </developer>
+        <developer>
+            <id>j-white</id>
+            <name>Jesse White</name>
+            <email>jesse@opennms.com</email>
+        </developer>
+        <developer>
+            <id>mershad-manesh</id>
+            <name>Morteza Ershad-Manesh</name>
+            <email>mershad-manesh@opennms.com</email>
+        </developer>
+        <developer>
+            <id>patrickschweizer</id>
+            <name>Patrick Schweizer</name>
+            <email>patrick@schweizer-ing.com</email>
+        </developer>
+        <developer>
+            <id>yangli</id>
+            <name>Yang Li</name>
+            <email>yali@opennms.com</email>
+        </developer>
+        <developer>
+            <id>aramosvizcarra</id>
+            <name>Alberto Ramos</name>
+            <email>aramos-vizcarra@nanthealth.com</email>
+        </developer>
+    </developers>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
