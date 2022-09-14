@@ -10,6 +10,9 @@ executors:
     machine:
       image: ubuntu-2004:202010-01
 
+orbs:
+  sign-packages: opennms/sign-packages@2.1.3
+
 workflows:
   build-deploy:
     jobs:
@@ -20,6 +23,7 @@ workflows:
       - deploy:
           context:
             - OSSRH Principal
+            - OpenNMS Build
           requires:
             - tests
           filters:
@@ -76,6 +80,10 @@ jobs:
     steps:
       - checkout
 
+      - sign-packages/setup-env:
+          skip_if_forked_pr: true
+          gnupg_home: ~/.gnupg
+
       - restore_cache:
           keys:
             - v1-dependencies-{{ checksum "pom.xml" }}
@@ -83,5 +91,5 @@ jobs:
       - run:
           name: Upload snapshot
           command: |
-            mvn -s .circleci/.circleci.settings.xml -DskipTests -Dmaven.verify.skip=true -Dmaven.install.skip=true deploy
+            mvn -s .circleci/.circleci.settings.xml -Prelease -DskipTests=true -Dmaven.verify.skip=true -Dmaven.install.skip=true deploy
 
