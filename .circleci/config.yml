@@ -24,6 +24,7 @@ workflows:
           context:
             - OSSRH Principal
             - OpenNMS Build
+            - "gpg-signing"
           requires:
             - tests
           filters:
