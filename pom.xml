@@ -74,9 +74,9 @@
         <log4j.version>2.17.1</log4j.version>
         <metrics.version>4.1.2</metrics.version>
         <mockito.version>2.18.0</mockito.version>
-        <okio.bundle.version>1.14.0_1</okio.bundle.version>
-        <okhttp.version>3.10.0</okhttp.version>
-        <okhttp.bundle.version>3.10.0_2</okhttp.bundle.version>
+        <okio.bundle.version>1.15.0_1</okio.bundle.version>
+        <okhttp.version>3.14.9</okhttp.version>
+        <okhttp.bundle.version>3.14.9_1</okhttp.bundle.version>
         <opennms.api.version>1.0.0</opennms.api.version>
         <osgi.version>6.0.0</osgi.version>
         <osgi.compendium.version>5.0.0</osgi.compendium.version>
