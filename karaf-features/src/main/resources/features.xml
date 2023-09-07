@@ -16,7 +16,8 @@
     </feature>
 
     <feature name="tss-cortex-okhttp" description="okhttp" version="${okhttp.version}">
-        <bundle dependency='true'>mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okio/${okio.bundle.version}</bundle>
+        <bundle dependency="true">wrap:mvn:com.google.code.findbugs/jsr305/3.0.2</bundle>
+        <bundle dependency="true">mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okio/${okio.bundle.version}</bundle>
         <bundle dependency="true">mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okhttp/${okhttp.bundle.version}</bundle>
         <bundle dependency="true">wrap:mvn:com.squareup.okhttp3/logging-interceptor/${okhttp.version}</bundle>
     </feature>
