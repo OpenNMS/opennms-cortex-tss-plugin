@@ -13,6 +13,9 @@
         <bundle dependency="true">mvn:org.json/json/${json.version}</bundle>
         <bundle dependency="true">mvn:org.opennms.plugin.timeseries.cortex.wrap/resilience4j/${project.version}</bundle>
         <bundle>mvn:org.opennms.plugins.timeseries/cortex-plugin/${project.version}</bundle>
+        <capability>
+          osgi.service;objectClass=org.opennms.integration.api.v1.distributed.KeyValueStore;effective:=active
+        </capability>
     </feature>
 
     <feature name="tss-cortex-okhttp" description="okhttp" version="${okhttp.version}">
