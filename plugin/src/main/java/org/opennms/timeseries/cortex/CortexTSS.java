@@ -188,6 +188,7 @@ public class CortexTSS implements TimeSeriesStorage {
 
     public void store(final List<Sample> samples, String clientID) throws StorageException {
         final List<Sample> samplesSorted = samples.stream() // Cortex doesn't like the Samples to be out of time order
+                .filter(sample -> !sample.getValue().isNaN())
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
 
