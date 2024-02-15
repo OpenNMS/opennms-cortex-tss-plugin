@@ -1,0 +1,15 @@
+version: 2
+updates:
+
+  - package-ecosystem: "maven"
+    directory: "/"
+    target-branch: "release-2.x"
+    reviewers:
+      - "rangerrick"
+    labels:
+      - "dependency update"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    schedule:
+      interval: "daily"
