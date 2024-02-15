@@ -70,7 +70,8 @@
         <java.version>11</java.version>
         <json.version>20230227</json.version>
         <junit.version>4.13.1</junit.version>
-        <karaf.version>4.3.9</karaf.version>
+        <karaf.version>4.3.10</karaf.version>
+        <karaf.plugin.version>4.4.5</karaf.plugin.version>
         <log4j.version>2.17.1</log4j.version>
         <metrics.version>4.1.2</metrics.version>
         <mockito.version>2.18.0</mockito.version>
@@ -124,6 +125,12 @@
                 <groupId>com.google.protobuf</groupId>
                 <artifactId>protobuf-java</artifactId>
                 <version>${protoc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.sun.istack</groupId>
+                <artifactId>istack-commons-runtime</artifactId>
+                <!-- this should meet-or-beat the version defined in Karaf's dependencies -->
+                <version>3.0.12</version>
             </dependency>
             <dependency>
                 <groupId>org.xerial.snappy</groupId>
