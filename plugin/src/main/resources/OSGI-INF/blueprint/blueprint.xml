@@ -33,7 +33,7 @@
     </bean>
 
     <!--Key-value store -->
-    <reference id="keyValueStore" interface="org.opennms.integration.api.v1.distributed.KeyValueStore" availability="optional"/>
+    <reference id="keyValueStore" interface="org.opennms.integration.api.v1.distributed.KeyValueStore"/>
 
     <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS" destroy-method="destroy">
         <argument ref="cortexTssConfig" />
