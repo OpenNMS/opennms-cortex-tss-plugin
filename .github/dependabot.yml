@@ -7,7 +7,7 @@ updates:
     reviewers:
       - "rangerrick"
     labels:
-      - "dependency update"
+      - "dependencies"
     commit-message:
       prefix: "build"
       include: "scope"
