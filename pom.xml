@@ -70,7 +70,7 @@
         <java.version>11</java.version>
         <json.version>20230227</json.version>
         <junit.version>4.13.2</junit.version>
-        <karaf.version>4.3.10</karaf.version>
+        <karaf.version>4.4.5</karaf.version>
         <karaf.plugin.version>4.4.5</karaf.plugin.version>
         <log4j.version>2.22.1</log4j.version>
         <metrics.version>4.1.2</metrics.version>
