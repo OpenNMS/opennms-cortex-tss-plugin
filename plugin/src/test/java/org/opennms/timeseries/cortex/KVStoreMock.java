@@ -1,7 +1,6 @@
 package org.opennms.timeseries.cortex;
 
 import org.opennms.integration.api.v1.distributed.KeyValueStore;
-import org.testcontainers.shaded.org.apache.commons.lang.NotImplementedException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -33,12 +32,12 @@ import java.util.concurrent.CompletableFuture;
 
         @Override
         public Optional getIfStale(String key, String context, long timestamp) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
         public OptionalLong getLastUpdated(String key, String context) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
@@ -48,12 +47,12 @@ import java.util.concurrent.CompletableFuture;
 
         @Override
         public void delete(String key, String context) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
         public void truncateContext(String context) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
@@ -70,17 +69,17 @@ import java.util.concurrent.CompletableFuture;
 
         @Override
         public CompletableFuture<Optional> getAsync(String key, String context) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
         public CompletableFuture<Optional> getIfStaleAsync(String key, String context, long timestamp) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
         public CompletableFuture<OptionalLong> getLastUpdatedAsync(String key, String context) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
@@ -95,12 +94,12 @@ import java.util.concurrent.CompletableFuture;
 
         @Override
         public CompletableFuture<Void> deleteAsync(String key, String context) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
         @Override
         public CompletableFuture<Void> truncateContextAsync(String context) {
-            throw new NotImplementedException();
+            throw new RuntimeException();
         }
 
 }
