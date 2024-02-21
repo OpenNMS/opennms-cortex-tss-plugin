@@ -130,7 +130,7 @@
                 <groupId>com.sun.istack</groupId>
                 <artifactId>istack-commons-runtime</artifactId>
                 <!-- this should meet-or-beat the version defined in Karaf's dependencies -->
-                <version>3.0.12</version>
+                <version>4.2.0</version>
             </dependency>
             <dependency>
                 <groupId>org.xerial.snappy</groupId>
