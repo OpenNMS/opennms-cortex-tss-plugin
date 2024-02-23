@@ -72,6 +72,7 @@
         <junit.version>4.13.2</junit.version>
         <karaf.version>4.3.10</karaf.version>
         <karaf.plugin.version>4.4.5</karaf.plugin.version>
+        <kotlin.version>1.9.10</kotlin.version>
         <log4j.version>2.23.0</log4j.version>
         <metrics.version>4.2.25</metrics.version>
         <mockito.version>5.10.0</mockito.version>
@@ -141,6 +142,17 @@
                 <groupId>io.dropwizard.metrics</groupId>
                 <artifactId>metrics-core</artifactId>
                 <version>${metrics.version}</version>
+            </dependency>
+            <!-- pulled in by okhttp3 -->
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib-common</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib-jdk8</artifactId>
+                <version>${kotlin.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.json</groupId>
