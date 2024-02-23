@@ -20,8 +20,8 @@
 
     <feature name="tss-cortex-okhttp" description="okhttp" version="${okhttp.version}">
         <bundle dependency="true">wrap:mvn:com.google.code.findbugs/jsr305/3.0.2</bundle>
-        <bundle dependency="true">mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okio/${okio.bundle.version}</bundle>
-        <bundle dependency="true">mvn:org.apache.servicemix.bundles/org.apache.servicemix.bundles.okhttp/${okhttp.bundle.version}</bundle>
+        <bundle dependency="true">wrap:mvn:com.squareup.okio/okio/${okio.version}$Bundle-SymbolicName=okio&amp;Export-Package=okio;version=${okio.version}&amp;Import-Package=!okio*,kotlin*;resolution:=optional,*</bundle>
+        <bundle dependency="true">wrap:mvn:com.squareup.okhttp3/okhttp/${okhttp.version}$Bundle-SymbolicName=okhttp3&amp;Bundle-Version=${okhttp.version}&amp;Export-Package=okhttp3;version=${okhttp.version}&amp;Import-Package=!okhttp3*,org.apache.http.*;resolution=optional,org.bouncycastle.*;resolution:=optional,org.openjsse.*;resolution:=optional,android.net.*;resolution:=optional,android.os.*;resolution:=optional,android.security.*;resolution:=optional,android.util.*;resolution:=optional,org.conscrypt.*;resolution:=optional,kotlin*;resolution:=optional,sun.security.ssl;resolution:=optional,dalvik.system;resolution:=optional,*</bundle>
         <bundle dependency="true">wrap:mvn:com.squareup.okhttp3/logging-interceptor/${okhttp.version}</bundle>
     </feature>
 
