@@ -75,7 +75,7 @@
         <kotlin.version>1.9.22</kotlin.version>
         <log4j.version>2.23.0</log4j.version>
         <metrics.version>4.2.25</metrics.version>
-        <mockito.version>5.10.0</mockito.version>
+        <mockito.version>5.11.0</mockito.version>
         <okio.version>3.8.0</okio.version>
         <okhttp.version>4.12.0</okhttp.version>
         <opennms.api.version>1.0.0</opennms.api.version>
