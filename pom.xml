@@ -73,7 +73,7 @@
         <karaf.version>4.3.10</karaf.version>
         <karaf.plugin.version>4.4.5</karaf.plugin.version>
         <kotlin.version>1.9.22</kotlin.version>
-        <log4j.version>2.23.0</log4j.version>
+        <log4j.version>2.23.1</log4j.version>
         <metrics.version>4.2.25</metrics.version>
         <mockito.version>5.11.0</mockito.version>
         <okio.version>3.8.0</okio.version>
