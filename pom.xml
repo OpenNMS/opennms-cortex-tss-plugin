@@ -72,7 +72,7 @@
         <junit.version>4.13.2</junit.version>
         <karaf.version>4.3.10</karaf.version>
         <karaf.plugin.version>4.4.5</karaf.plugin.version>
-        <kotlin.version>1.9.22</kotlin.version>
+        <kotlin.version>1.9.23</kotlin.version>
         <log4j.version>2.23.1</log4j.version>
         <metrics.version>4.2.25</metrics.version>
         <mockito.version>5.11.0</mockito.version>
