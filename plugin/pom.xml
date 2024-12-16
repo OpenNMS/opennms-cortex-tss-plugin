@@ -28,10 +28,6 @@
                         <Karaf-Commands>*</Karaf-Commands>
                         <!-- Nothing to export -->
                         <Export-Package></Export-Package>
-                        <Import-Package>
-                          com.google.common.*;version="33",
-                          *
-                        </Import-Package>
                     </instructions>
                 </configuration>
             </plugin>
@@ -95,9 +91,15 @@
             <artifactId>guava</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
-            <version>${okhttp.version}</version>
+            <groupId>org.apache.servicemix.bundles</groupId>
+            <artifactId>org.apache.servicemix.bundles.okhttp</artifactId>
+            <version>${okhttp.bundle.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.squareup.okio</groupId>
+                    <artifactId>okio</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
