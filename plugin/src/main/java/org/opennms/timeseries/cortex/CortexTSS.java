@@ -417,15 +417,15 @@ public class CortexTSS implements TimeSeriesStorage {
           asyncCacheSave(tagMatchers, metrics);
           return metrics;
       } catch (StorageException ex) {
-          LOG.error("An expected error occurs : {}", ex.getMessage());
-          LOG.debug("An expected error occurs : {}", ex.getMessage());
-          LOG.error("An expected error occurs : {}", ex.getMessage());
+          LOG.error("An unexpected error occurs : {}", ex.getMessage());
+          LOG.debug("An unexpected error occurs : {}", ex.getMessage());
+          LOG.error("An unexpected error occurs : {}", ex.getMessage());
           throw new RuntimeException(" "+ex.getMessage());
       }
       catch (Exception ex) {
-          LOG.error("An expected error occurs : {}", ex.getMessage());
-          LOG.debug("An expected error occurs : {}", ex.getMessage());
-          LOG.error("An expected error occurs : {}", ex.getMessage());
+          LOG.error("An unexpected error occurs : {}", ex.getMessage());
+          LOG.debug("An unexpected error occurs : {}", ex.getMessage());
+          LOG.error("An unexpected error occurs : {}", ex.getMessage());
           throw new RuntimeException(" "+ex.getMessage());
       }
 
