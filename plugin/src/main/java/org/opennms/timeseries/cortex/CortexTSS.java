@@ -31,21 +31,14 @@ package org.opennms.timeseries.cortex;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.time.Instant;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.Map;
 
 import org.json.JSONObject;
 import org.opennms.integration.api.v1.distributed.KeyValueStore;
@@ -407,14 +400,57 @@ public class CortexTSS implements TimeSeriesStorage {
         if(tagMatchers.isEmpty()) {
             throw new IllegalArgumentException("tagMatchers cannot be null");
         }
-        String url = String.format("%s/series?match[]={%s}",
-                config.getReadUrl(),
-                tagMatchersToQuery(tagMatchers));
-        String json = makeCallToQueryApi(url, clientID);
-        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
-        metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
-        return metrics;
+      try {
+          long endTime = Instant.now().getEpochSecond(); // Current time in epoch seconds
+          long startTime = endTime - (config.getSeriesFilterTimeRangeInHour() * 3600); // Subtract the dynamic hours in seconds
+          String url = (tagMatchers.size() == 1)
+                  ? String.format("%s/series?match[]={%s}&start=%d&end=%d",
+                  config.getReadUrl(),
+                  tagMatchersToQuery(tagMatchers),
+                  startTime,
+                  endTime)
+                  : String.format("%s/series?match[]={%s}",
+                  config.getReadUrl(),
+                  tagMatchersToQuery(tagMatchers));
+          String json = makeCallToQueryApi(url, clientID);
+          List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
+          asyncCacheSave(tagMatchers, metrics);
+          return metrics;
+      } catch (StorageException ex) {
+          LOG.error("An expected error occurs : {}", ex.getMessage());
+          LOG.debug("An expected error occurs : {}", ex.getMessage());
+          LOG.error("An expected error occurs : {}", ex.getMessage());
+          throw new RuntimeException(" "+ex.getMessage());
+      }
+      catch (Exception ex) {
+          LOG.error("An expected error occurs : {}", ex.getMessage());
+          LOG.debug("An expected error occurs : {}", ex.getMessage());
+          LOG.error("An expected error occurs : {}", ex.getMessage());
+          throw new RuntimeException(" "+ex.getMessage());
+      }
+
     }
+
+
+    public void asyncCacheSave(Collection<TagMatcher> tagMatchers, List<Metric> metrics) {
+        if (tagMatchers == null || tagMatchers.isEmpty() || metrics == null || metrics.isEmpty()) {
+            LOG.warn("Skipping cache save: tagMatchers or metrics are null/empty.");
+            return;
+        }
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                metrics.forEach(metric -> {
+                    if (metric != null && metric.getKey() != null) {
+                        metricCache.put(metric.getKey(), metric);
+                    }
+                });
+            } catch (Exception e) {
+                LOG.error("Error asynchronously saving metrics.", e);
+            }
+        });
+    }
+
 
     /** Returns the full metric (incl. meta data from the database).
      * This is only needed if not in cache already - which it should be. */
