@@ -4,7 +4,7 @@ version: 2.1
 executors:
   build-executor:
     docker:
-      - image: cimg/openjdk:11.0
+      - image: cimg/openjdk:17.0
         environment:
           MAVEN_OPTS: -Xmx1g
   system-test-executor:
@@ -106,6 +106,9 @@ jobs:
     steps:
       - attach_workspace:
           at: ~/
+      - run:
+          name: Set environment to Java 17
+          command: sudo update-java-alternatives --set java-1.17.0-openjdk-amd64
       - run:
           name: Run system test with docker-compose
           command: make integration-tests

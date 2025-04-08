@@ -9,7 +9,7 @@ VERSION             ?= $(shell mvn help:evaluate -Dexpression=project.version -q
 GIT_BRANCH          := $(shell git branch --show-current)
 GIT_SHORT_HASH      := $(shell git rev-parse --short HEAD)
 DATE                := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ") # Date format RFC3339
-JAVA_MAJOR_VERSION  := 11
+JAVA_MAJOR_VERSION  := 17
 MAVEN_ARGS          := --batch-mode -DupdatePolicy=never -Djava.awt.headless=true -Dstyle.color=always
 MAVEN_SETTINGS_XML  := .circleci/.circleci.settings.xml
 
