@@ -4,7 +4,7 @@
 
 .DEFAULT_GOAL := cortex-tss-plugin
 
-SHELL               := /bin/bash -o nounset -o pipefail -o errexit
+SHELL               := /bin/bash -o pipefail -o errexit
 VERSION             ?= $(shell mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
 GIT_BRANCH          := $(shell git branch --show-current)
 GIT_SHORT_HASH      := $(shell git rev-parse --short HEAD)
