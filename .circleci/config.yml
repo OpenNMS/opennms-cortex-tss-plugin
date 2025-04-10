@@ -119,9 +119,16 @@ jobs:
             find . -type f -regex ".*/target/failsafe-reports/.*xml" -exec cp {} ~/junit/ \;
             find . -type f -regex ".*/target/surefire-reports/.*xml" -exec cp {} ~/junit/ \;
           when: always
+      - run:
+          name: Collect build artifacts
+          command: |
+            make collect-artifacts
 
       - store_test_results:
           path: ~/junit
+
+      - store_artifacts:
+          path: target/artifacts
 
       - persist_to_workspace:
           root: ~/
