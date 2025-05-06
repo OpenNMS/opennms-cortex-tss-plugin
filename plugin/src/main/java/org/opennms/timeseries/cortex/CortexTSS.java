@@ -138,16 +138,16 @@ public class CortexTSS implements TimeSeriesStorage {
 
     private static final ThreadPoolExecutor PROCESSING_EXECUTOR =
             new ThreadPoolExecutor(
-                    Runtime.getRuntime().availableProcessors(),       // core threads
-                    Runtime.getRuntime().availableProcessors() * 2,   // max threads
-                    5, TimeUnit.MINUTES,                              // idle threads retire
-                    new LinkedBlockingQueue<>(10_000),                // back‑pressure queue
+                    Runtime.getRuntime().availableProcessors(),
+                    Runtime.getRuntime().availableProcessors() * 2,
+                    5, TimeUnit.MINUTES,
+                    new LinkedBlockingQueue<>(10_000),
                     runnable -> {
                         Thread t = new Thread(runnable, "cortex-processor-" + runnable.hashCode());
                         t.setDaemon(true);
                         return t;
                     },
-                    new ThreadPoolExecutor.CallerRunsPolicy()         // on saturation, back‑off to caller
+                    new ThreadPoolExecutor.CallerRunsPolicy()
             );
 
 
