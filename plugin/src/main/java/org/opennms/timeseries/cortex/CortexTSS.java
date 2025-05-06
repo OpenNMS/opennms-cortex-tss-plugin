@@ -447,7 +447,8 @@ public class CortexTSS implements TimeSeriesStorage {
             if (cause instanceof TimeoutException) {
                 metrices.cancel(true);
             }
-            throw new RuntimeException(e);
+
+            throw new IllegalArgumentException(e);
         }
     }
 
