@@ -561,9 +561,6 @@ public class CortexTSS implements TimeSeriesStorage {
 
     private String makeCallToQueryApi(final String url, String clientID) throws StorageException {
 
-     int millies =   client.readTimeoutMillis();
-        int wmillies =   client.writeTimeoutMillis();
-
         final Request.Builder builder = new Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
