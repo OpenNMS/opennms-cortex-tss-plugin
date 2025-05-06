@@ -14,7 +14,6 @@ public class CortexTSSConfig {
     private final long bulkheadMaxWaitDurationInMs;
     private final String organizationId;
     private final boolean hasOrganizationId;
-    private  final  int seriesFilterTimeRangeInHour;
 
     public CortexTSSConfig() {
         this(builder());
@@ -30,7 +29,6 @@ public class CortexTSSConfig {
         this.externalTagsCacheSize = builder.externalTagsCacheSize;
         this.bulkheadMaxWaitDurationInMs = builder.bulkheadMaxWaitDurationInMs;
         this.organizationId = builder.organizationId;
-        this.seriesFilterTimeRangeInHour =builder.seriesFilterTimeRangeInHour;
         this.hasOrganizationId = organizationId != null && organizationId.trim().length() > 0;
     }
 
@@ -44,8 +42,7 @@ public class CortexTSSConfig {
             final long metricCacheSize,
             final long externalTagsCacheSize,
             final long bulkheadMaxWaitDurationInMs,
-            final String organizationId,
-            int seriesFilterTimeRangeInHour) {
+            final String organizationId) {
         this(builder()
                 .writeUrl(writeUrl)
                 .readUrl(readUrl)
@@ -55,7 +52,6 @@ public class CortexTSSConfig {
                 .metricCacheSize(metricCacheSize)
                 .externalCacheSize(externalTagsCacheSize)
                 .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs)
-                .seriesFilterTimeRangeInHour(seriesFilterTimeRangeInHour)
                 .organizationId(organizationId));
     }
 
@@ -69,9 +65,6 @@ public class CortexTSSConfig {
 
     public int getMaxConcurrentHttpConnections() {
         return maxConcurrentHttpConnections;
-    }
-    public int getSeriesFilterTimeRangeInHour() {
-        return seriesFilterTimeRangeInHour;
     }
 
     public long getWriteTimeoutInMs() {
@@ -108,13 +101,12 @@ public class CortexTSSConfig {
         private String writeUrl = "http://localhost:9009/api/prom/push";
         private String readUrl = "http://localhost:9009/prometheus/api/v1";
         private int maxConcurrentHttpConnections = 100;
-        private long writeTimeoutInMs = 1000;
-        private long readTimeoutInMs = 1000;
-        private long metricCacheSize = 1000;
-        private long externalTagsCacheSize = 1000;
+        private long writeTimeoutInMs = 5000;
+        private long readTimeoutInMs = 5000;
+        private long metricCacheSize = 5000;
+        private long externalTagsCacheSize = 5000;
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;
         private String organizationId = null;
-        private   int seriesFilterTimeRangeInHour;
 
         public Builder writeUrl(final String writeUrl) {
             this.writeUrl = writeUrl;
@@ -153,11 +145,6 @@ public class CortexTSSConfig {
 
         public Builder bulkheadMaxWaitDurationInMs(final long bulkheadMaxWaitDurationInMs) {
             this.bulkheadMaxWaitDurationInMs = bulkheadMaxWaitDurationInMs;
-            return this;
-        }
-
-        public Builder seriesFilterTimeRangeInHour(final int seriesFilterTimeRangeInHour) {
-            this.seriesFilterTimeRangeInHour = seriesFilterTimeRangeInHour;
             return this;
         }
 

@@ -33,8 +33,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -136,10 +135,34 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Meter extTagsCacheMissed = metrics.meter("extTagsCacheMissed");
     private final Meter extTagPutTransactionFailed = metrics.meter("extTagPutTransactionFailed");
 
+
+    private static final ThreadPoolExecutor PROCESSING_EXECUTOR =
+            new ThreadPoolExecutor(
+                    Runtime.getRuntime().availableProcessors(),       // core threads
+                    Runtime.getRuntime().availableProcessors() * 2,   // max threads
+                    5, TimeUnit.MINUTES,                              // idle threads retire
+                    new LinkedBlockingQueue<>(10_000),                // back‑pressure queue
+                    runnable -> {
+                        Thread t = new Thread(runnable, "cortex-processor-" + runnable.hashCode());
+                        t.setDaemon(true);
+                        return t;
+                    },
+                    new ThreadPoolExecutor.CallerRunsPolicy()         // on saturation, back‑off to caller
+            );
+
+
     public CortexTSS(final CortexTSSConfig config, final KeyValueStore keyValueStore) {
         this.config = Objects.requireNonNull(config);
         ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
-        Dispatcher dispatcher = new Dispatcher();
+        Dispatcher dispatcher = new Dispatcher(
+                Executors.newFixedThreadPool(config.getMaxConcurrentHttpConnections(),
+                        runnable -> {
+                            Thread t = new Thread(runnable);
+                            t.setName("okhttp-dispatcher-" + t.getId());
+                            t.setDaemon(true);
+                            return t;
+                        })
+        );
         dispatcher.setMaxRequests(config.getMaxConcurrentHttpConnections());
         dispatcher.setMaxRequestsPerHost(config.getMaxConcurrentHttpConnections());
 
@@ -394,47 +417,43 @@ public class CortexTSS implements TimeSeriesStorage {
         return findMetrics(tagMatchers, config.getOrganizationId());
     }
 
-    public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers, String clientID) throws StorageException {
+
+    public List<Metric> findMetrics(
+            Collection<TagMatcher> tagMatchers,
+            String clientID
+    ) throws StorageException {
+        long stime = System.nanoTime();
         LOG.info("Retrieving metrics for tagMatchers: {}", tagMatchers);
         Objects.requireNonNull(tagMatchers);
-        if(tagMatchers.isEmpty()) {
-            throw new IllegalArgumentException("tagMatchers cannot be null");
-        }
-      try {
-          long endTime = Instant.now().getEpochSecond(); // Current time in epoch seconds
-          long startTime = endTime - (config.getSeriesFilterTimeRangeInHour() * 3600); // Subtract the dynamic hours in seconds
-          String url = (tagMatchers.size() == 1)
-                  ? String.format("%s/series?match[]={%s}&start=%d&end=%d",
-                  config.getReadUrl(),
-                  tagMatchersToQuery(tagMatchers),
-                  startTime,
-                  endTime)
-                  : String.format("%s/series?match[]={%s}",
-                  config.getReadUrl(),
-                  tagMatchersToQuery(tagMatchers));
-          String json = makeCallToQueryApi(url, clientID);
-          List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
-          asyncCacheSave(tagMatchers, metrics);
-          return metrics;
-      } catch (StorageException ex) {
-          LOG.error("An unexpected error occurs : {}", ex.getMessage());
-          LOG.debug("An unexpected error occurs : {}", ex.getMessage());
-          LOG.error("An unexpected error occurs : {}", ex.getMessage());
-          throw new RuntimeException(" "+ex.getMessage());
-      }
-      catch (Exception ex) {
-          LOG.error("An unexpected error occurs : {}", ex.getMessage());
-          LOG.debug("An unexpected error occurs : {}", ex.getMessage());
-          LOG.error("An unexpected error occurs : {}", ex.getMessage());
-          throw new RuntimeException(" "+ex.getMessage());
-      }
 
+        String url = String.format("%s/series?match[]={%s}",
+                config.getReadUrl(), tagMatchersToQuery(tagMatchers));
+
+        CompletableFuture<List<Metric>> metrices = makeCallToQueryApiAsync(url, clientID)
+                .thenApplyAsync(json -> {
+                    try {
+                        List<Metric> m = ResultMapper.fromSeriesQueryResult(json, kvStore);
+                        asyncCacheSave(tagMatchers, m);
+                        return m;
+                    } catch (Exception e) {
+                        throw new CompletionException(e);
+                    }
+                }, PROCESSING_EXECUTOR);
+
+        try {
+            return metrices.get(config.getReadTimeoutInMs(), TimeUnit.SECONDS);
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof TimeoutException) {
+                metrices.cancel(true);
+            }
+            throw new RuntimeException(e);
+        }
     }
 
 
     public void asyncCacheSave(Collection<TagMatcher> tagMatchers, List<Metric> metrics) {
         if (tagMatchers == null || tagMatchers.isEmpty() || metrics == null || metrics.isEmpty()) {
-            LOG.warn("Skipping cache save: tagMatchers or metrics are null/empty.");
             return;
         }
 
@@ -542,6 +561,9 @@ public class CortexTSS implements TimeSeriesStorage {
 
     private String makeCallToQueryApi(final String url, String clientID) throws StorageException {
 
+     int millies =   client.readTimeoutMillis();
+        int wmillies =   client.writeTimeoutMillis();
+
         final Request.Builder builder = new Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
@@ -574,6 +596,43 @@ public class CortexTSS implements TimeSeriesStorage {
             throw new StorageException(String.format("Call to %s failed.", url), e);
         }
     }
+
+
+    private CompletableFuture<String> makeCallToQueryApiAsync(String url, String clientID) {
+        Request.Builder b = new Request.Builder()
+                .url(url)
+                .get()
+                .addHeader("User-Agent", CortexTSS.class.getName());
+        if (clientID != null && !clientID.isBlank()) {
+            b.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
+        }
+        if (config.hasOrganizationId()) {
+            b.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
+        }
+
+        CompletableFuture<String> cf = new CompletableFuture<>();
+        client.newCall(b.build()).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                cf.completeExceptionally(new StorageException("HTTP call failed", e));
+            }
+            @Override public void onResponse(Call call, Response resp) {
+                try (ResponseBody body = resp.body()) {
+                    if (!resp.isSuccessful() || body == null) {
+                        cf.completeExceptionally(
+                                new StorageException("Bad response: " + resp.code())
+                        );
+                    } else {
+                        cf.complete(body.string());
+                    }
+                } catch (IOException ex) {
+                    cf.completeExceptionally(ex);
+                }
+            }
+        });
+        return cf;
+    }
+
+
 
     static long determineStepInSeconds(TimeSeriesFetchRequest request) {
         // step cannot be 0, Prometheus always aggregates in a range query.
