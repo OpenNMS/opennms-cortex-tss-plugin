@@ -337,28 +337,41 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     private static PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
-        PrometheusTypes.TimeSeries.Builder builder = PrometheusTypes.TimeSeries.newBuilder();
-        // Convert all of the tags to labels
-        Stream.concat(sample.getMetric().getIntrinsicTags().stream(), sample.getMetric().getMetaTags().stream())
-                .forEach(tag -> {
-                    // Special handling for the metric name
+    // ------------------------------------------------------------------
+    // 1) Translate tags to Prometheus labels (with sanitization)
+    // 2) Sort by label name (lexicographically)
+    // 3) Assemble the TimeSeries with sorted labels
+    // Consistent with the Prometheus remote write spec: https://prometheus.io/docs/specs/prw/remote_write_spec/
+    // ------------------------------------------------------------------
+        List<PrometheusTypes.Label> labels = Stream
+                .concat(sample.getMetric().getIntrinsicTags().stream(),
+                        sample.getMetric().getMetaTags().stream())
+                .map(tag -> {
+                    final String labelName;
+                    final String labelValue;
                     if (IntrinsicTagNames.name.equals(tag.getKey())) {
-                        builder.addLabels(PrometheusTypes.Label.newBuilder()
-                                .setName(METRIC_NAME_LABEL)
-                                .setValue(sanitizeMetricName(tag.getValue())));
+                        labelName = METRIC_NAME_LABEL;
+                        labelValue = sanitizeMetricName(tag.getValue());
                     } else {
-                        builder.addLabels(PrometheusTypes.Label.newBuilder()
-                                .setName(sanitizeLabelName(tag.getKey()))
-                                .setValue(sanitizeLabelValue(tag.getValue())));
+                        labelName = sanitizeLabelName(tag.getKey());
+                        labelValue = sanitizeLabelValue(tag.getValue());
                     }
-                });
+                    return PrometheusTypes.Label.newBuilder()
+                            .setName(labelName)
+                            .setValue(labelValue)
+                            .build();
+                })
+                .sorted(Comparator.comparing(PrometheusTypes.Label::getName))
+                .collect(Collectors.toList());
 
+        PrometheusTypes.TimeSeries.Builder tsBuilder = PrometheusTypes.TimeSeries.newBuilder();
+        labels.forEach(tsBuilder::addLabels);
 
-        // Add the sample timestamp & value
-        builder.addSamples(PrometheusTypes.Sample.newBuilder()
+        tsBuilder.addSamples(PrometheusTypes.Sample.newBuilder()
                 .setTimestamp(sample.getTime().toEpochMilli())
                 .setValue(sample.getValue()));
-        return builder;
+
+        return tsBuilder;
     }
 
     public static String sanitizeMetricName(String metricName) {
