@@ -104,7 +104,7 @@ public class CortexTSSConfig {
         private long writeTimeoutInMs = 5000;
         private long readTimeoutInMs = 5000;
         private long metricCacheSize = 5000;
-        private long externalTagsCacheSize = 5000;
+        private long externalTagsCacheSize = 1000;
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;
         private String organizationId = null;
 

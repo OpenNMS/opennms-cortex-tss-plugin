@@ -31,14 +31,20 @@ package org.opennms.timeseries.cortex;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
+import java.util.Map;
 import org.json.JSONObject;
 import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
@@ -426,6 +432,10 @@ public class CortexTSS implements TimeSeriesStorage {
         LOG.info("Retrieving metrics for tagMatchers: {}", tagMatchers);
         Objects.requireNonNull(tagMatchers);
 
+        if(tagMatchers.isEmpty()) {
+            throw new IllegalArgumentException("tagMatchers cannot be null");
+        }
+
         String url = String.format("%s/series?match[]={%s}",
                 config.getReadUrl(), tagMatchersToQuery(tagMatchers));
 
@@ -433,7 +443,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 .thenApplyAsync(json -> {
                     try {
                         List<Metric> m = ResultMapper.fromSeriesQueryResult(json, kvStore);
-                        asyncCacheSave(tagMatchers, m);
+                        asyncCacheSave(m);
                         return m;
                     } catch (Exception e) {
                         throw new CompletionException(e);
@@ -441,7 +451,7 @@ public class CortexTSS implements TimeSeriesStorage {
                 }, PROCESSING_EXECUTOR);
 
         try {
-            return metrices.get(config.getReadTimeoutInMs(), TimeUnit.SECONDS);
+            return metrices.get(config.getReadTimeoutInMs(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException | ExecutionException | TimeoutException e) {
             Throwable cause = e.getCause();
             if (cause instanceof TimeoutException) {
@@ -453,8 +463,8 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
 
-    public void asyncCacheSave(Collection<TagMatcher> tagMatchers, List<Metric> metrics) {
-        if (tagMatchers == null || tagMatchers.isEmpty() || metrics == null || metrics.isEmpty()) {
+    public void asyncCacheSave( List<Metric> metrics) {
+        if (metrics == null || metrics.isEmpty()) {
             return;
         }
 
@@ -716,6 +726,15 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public void destroy() {
+        PROCESSING_EXECUTOR.shutdown();
+        try {
+            if (!PROCESSING_EXECUTOR.awaitTermination(30, TimeUnit.SECONDS)) {
+                PROCESSING_EXECUTOR.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            PROCESSING_EXECUTOR.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     public MetricRegistry getMetrics() {
