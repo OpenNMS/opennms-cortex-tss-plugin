@@ -41,17 +41,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.Map;
+
 import org.json.JSONObject;
 import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
@@ -148,36 +145,17 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Meter extTagsCacheMissed = metrics.meter("extTagsCacheMissed");
     private final Meter extTagPutTransactionFailed = metrics.meter("extTagPutTransactionFailed");
 
-
-    private static final ThreadPoolExecutor PROCESSING_EXECUTOR =
-            new ThreadPoolExecutor(
-                    Runtime.getRuntime().availableProcessors(),
-                    Runtime.getRuntime().availableProcessors() * 2,
-                    5, TimeUnit.MINUTES,
-                    new LinkedBlockingQueue<>(10_000),
-                    runnable -> {
-                        Thread t = new Thread(runnable, "cortex-processor-" + runnable.hashCode());
-                        t.setDaemon(true);
-                        return t;
-                    },
-                    new ThreadPoolExecutor.CallerRunsPolicy()
-            );
-
-
     public CortexTSS(final CortexTSSConfig config, final KeyValueStore keyValueStore) {
         this.config = Objects.requireNonNull(config);
-        ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
-        Dispatcher dispatcher = new Dispatcher(
-                Executors.newFixedThreadPool(config.getMaxConcurrentHttpConnections(),
-                        runnable -> {
-                            Thread t = new Thread(runnable);
-                            t.setName("okhttp-dispatcher-" + t.getId());
-                            t.setDaemon(true);
-                            return t;
-                        })
-        );
-        dispatcher.setMaxRequests(config.getMaxConcurrentHttpConnections());
-        dispatcher.setMaxRequestsPerHost(config.getMaxConcurrentHttpConnections());
+
+        int maxThreads = config.getMaxConcurrentHttpConnections();
+        ConnectionPool connectionPool =
+                new ConnectionPool(maxThreads, 5, TimeUnit.MINUTES);
+        ExecutorService okHttpExecutor = Executors.newFixedThreadPool(maxThreads);
+        Dispatcher dispatcher = new Dispatcher(okHttpExecutor);
+        dispatcher.setMaxRequests(maxThreads);
+        dispatcher.setMaxRequestsPerHost(maxThreads);
+
 
         this.client = new OkHttpClient.Builder()
                 .readTimeout(config.getReadTimeoutInMs(), TimeUnit.MILLISECONDS)
@@ -192,7 +170,7 @@ public class CortexTSS implements TimeSeriesStorage {
         this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
 
         BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
-                .maxConcurrentCalls(config.getMaxConcurrentHttpConnections() * 6)
+                .maxConcurrentCalls(maxThreads * 4)
                 .maxWaitDuration(Duration.ofMillis(config.getBulkheadMaxWaitDurationInMs()))
                 .fairCallHandlingStrategyEnabled(true)
                 .build();
@@ -430,43 +408,19 @@ public class CortexTSS implements TimeSeriesStorage {
         return findMetrics(tagMatchers, config.getOrganizationId());
     }
 
-
-    public List<Metric> findMetrics(
-            Collection<TagMatcher> tagMatchers,
-            String clientID
-    ) throws StorageException {
-        long stime = System.nanoTime();
+    public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers, String clientID) throws StorageException {
         LOG.info("Retrieving metrics for tagMatchers: {}", tagMatchers);
         Objects.requireNonNull(tagMatchers);
-
         if(tagMatchers.isEmpty()) {
             throw new IllegalArgumentException("tagMatchers cannot be null");
         }
-
         String url = String.format("%s/series?match[]={%s}",
-                config.getReadUrl(), tagMatchersToQuery(tagMatchers));
-
-        CompletableFuture<List<Metric>> metrices = makeCallToQueryApiAsync(url, clientID)
-                .thenApplyAsync(json -> {
-                    try {
-                        List<Metric> m = ResultMapper.fromSeriesQueryResult(json, kvStore);
-                        asyncCacheSave(m);
-                        return m;
-                    } catch (Exception e) {
-                        throw new CompletionException(e);
-                    }
-                }, PROCESSING_EXECUTOR);
-
-        try {
-            return metrices.get(config.getReadTimeoutInMs(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException | ExecutionException | TimeoutException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof TimeoutException) {
-                metrices.cancel(true);
-            }
-
-            throw new IllegalArgumentException(e);
-        }
+                config.getReadUrl(),
+                tagMatchersToQuery(tagMatchers));
+        String json = makeCallToQueryApi(url, clientID);
+        List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
+        asyncCacheSave(metrics);
+        return metrics;
     }
 
 
@@ -612,43 +566,6 @@ public class CortexTSS implements TimeSeriesStorage {
         }
     }
 
-
-    private CompletableFuture<String> makeCallToQueryApiAsync(String url, String clientID) {
-        Request.Builder b = new Request.Builder()
-                .url(url)
-                .get()
-                .addHeader("User-Agent", CortexTSS.class.getName());
-        if (clientID != null && !clientID.isBlank()) {
-            b.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
-        }
-        if (config.hasOrganizationId()) {
-            b.addHeader(X_SCOPE_ORG_ID_HEADER, config.getOrganizationId());
-        }
-
-        CompletableFuture<String> cf = new CompletableFuture<>();
-        client.newCall(b.build()).enqueue(new Callback() {
-            @Override public void onFailure(Call call, IOException e) {
-                cf.completeExceptionally(new StorageException("HTTP call failed", e));
-            }
-            @Override public void onResponse(Call call, Response resp) {
-                try (ResponseBody body = resp.body()) {
-                    if (!resp.isSuccessful() || body == null) {
-                        cf.completeExceptionally(
-                                new StorageException("Bad response: " + resp.code())
-                        );
-                    } else {
-                        cf.complete(body.string());
-                    }
-                } catch (IOException ex) {
-                    cf.completeExceptionally(ex);
-                }
-            }
-        });
-        return cf;
-    }
-
-
-
     static long determineStepInSeconds(TimeSeriesFetchRequest request) {
         // step cannot be 0, Prometheus always aggregates in a range query.
         // so we try to calculate a small step but not too small for the range since we don't want to have too many results
@@ -733,15 +650,7 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public void destroy() {
-        PROCESSING_EXECUTOR.shutdown();
-        try {
-            if (!PROCESSING_EXECUTOR.awaitTermination(30, TimeUnit.SECONDS)) {
-                PROCESSING_EXECUTOR.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            PROCESSING_EXECUTOR.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+
     }
 
     public MetricRegistry getMetrics() {

@@ -8,14 +8,12 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.Collections;
 import java.util.Spliterators;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -40,11 +38,6 @@ public class ResultMapper {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final JsonFactory JSON_FACTORY = new JsonFactory(MAPPER);
-
-
-    private static final ExecutorService EXTERNAL_TAGS_POOL =
-            Executors.newFixedThreadPool(10);
-
 
     private ResultMapper(){
     }
@@ -76,7 +69,7 @@ public class ResultMapper {
 
     public static List<Metric> fromSeriesQueryResult(
             final String queryResult,
-            final KeyValueStore store) throws IOException {
+            final KeyValueStore store)  {
 
         List<Metric> metrics = parseMetrics(queryResult);
 
@@ -119,7 +112,7 @@ public class ResultMapper {
         } else return metric;
     }
 
-    private static List<Metric> parseMetrics(String json) throws IOException {
+    private static List<Metric> parseMetrics(String json)  {
         try (JsonParser p = JSON_FACTORY.createParser(json)) {
 
             if (p.nextToken() != JsonToken.START_OBJECT) {
@@ -145,6 +138,10 @@ public class ResultMapper {
                 }
                 p.skipChildren();
             }
+        } catch (JsonParseException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
         return Collections.emptyList();
     }
@@ -152,22 +149,8 @@ public class ResultMapper {
     private static List<Metric> enrichWithExternalTags(
             List<Metric> metrics,
             KeyValueStore store) {
-        if (metrics.isEmpty()) {
-            return metrics;
-        }
-
-        List<CompletableFuture<Metric>> futures = metrics.stream()
-                .map(metric ->
-                        CompletableFuture.supplyAsync(
-                                () -> appendExternalTagsToMetric(metric, store),
-                                EXTERNAL_TAGS_POOL
-                        )
-                ).collect(Collectors.toList());
-
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0])).join();
-
-        return futures.stream()
-                .map(CompletableFuture::join)
+        return metrics.parallelStream()
+                .map(metric -> appendExternalTagsToMetric(metric, store))
                 .collect(Collectors.toList());
     }
 
