@@ -78,7 +78,7 @@
         <metrics.version>4.2.25</metrics.version>
         <okio.bundle.version>1.15.0_1</okio.bundle.version>
         <okhttp.version>4.12.0</okhttp.version>
-        <org.jackson>2.16.1</org.jackson>
+        <jackson.version>2.16.1</jackson.version>
         <okhttp.bundle.version>3.13.1_1</okhttp.bundle.version>
         <opennms.api.version>1.0.0</opennms.api.version>
         <osgi.version>6.0.0</osgi.version>

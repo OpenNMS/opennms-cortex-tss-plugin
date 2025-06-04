@@ -126,13 +126,13 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
-            <version>${org.jackson}</version>
+            <version>${jackson.version}</version>
         </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>${org.jackson}</version>
+            <version>${jackson.version}</version>
         </dependency>
         <dependency>
             <groupId>org.opennms.plugin.timeseries.cortex.wrap</groupId>

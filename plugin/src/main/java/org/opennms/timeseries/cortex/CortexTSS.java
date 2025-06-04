@@ -649,7 +649,16 @@ public class CortexTSS implements TimeSeriesStorage {
 
     }
 
-    public void destroy() {
+    public void destroy() throws InterruptedException {
+       ExecutorService executorService =  client.dispatcher().executorService();
+
+       executorService.shutdown();
+
+        executorService.awaitTermination(10, TimeUnit.SECONDS);
+
+        client.connectionPool().evictAll();
+
+        client.dispatcher().cancelAll();
 
     }
 

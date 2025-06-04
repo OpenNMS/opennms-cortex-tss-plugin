@@ -71,9 +71,8 @@ public class ResultMapper {
             final String queryResult,
             final KeyValueStore store)  {
 
-        List<Metric> metrics = parseMetrics(queryResult);
+       return parseMetrics(queryResult,store);
 
-        return enrichWithExternalTags(metrics, store);
     }
 
 
@@ -112,7 +111,7 @@ public class ResultMapper {
         } else return metric;
     }
 
-    private static List<Metric> parseMetrics(String json)  {
+    private static List<Metric> parseMetrics(String json,KeyValueStore store)  {
         try (JsonParser p = JSON_FACTORY.createParser(json)) {
 
             if (p.nextToken() != JsonToken.START_OBJECT) {
@@ -132,7 +131,9 @@ public class ResultMapper {
 
                     List<Metric> list = new ArrayList<>();
                     while (iterator.hasNext()) {
-                        list.add(toMetricFromMap(iterator.next()));
+                        list.add(
+                                appendExternalTagsToMetric(
+                                toMetricFromMap(iterator.next()), store));
                     }
                     return list;
                 }
@@ -146,13 +147,7 @@ public class ResultMapper {
         return Collections.emptyList();
     }
 
-    private static List<Metric> enrichWithExternalTags(
-            List<Metric> metrics,
-            KeyValueStore store) {
-        return metrics.parallelStream()
-                .map(metric -> appendExternalTagsToMetric(metric, store))
-                .collect(Collectors.toList());
-    }
+
 
 
 }
