@@ -634,7 +634,6 @@ public class CortexTSS implements TimeSeriesStorage {
 
        executorService.shutdown();
 
-        executorService.awaitTermination(10, TimeUnit.SECONDS);
 
         client.connectionPool().evictAll();
 
