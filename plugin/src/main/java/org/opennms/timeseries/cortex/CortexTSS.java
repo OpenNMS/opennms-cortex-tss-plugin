@@ -419,29 +419,9 @@ public class CortexTSS implements TimeSeriesStorage {
                 tagMatchersToQuery(tagMatchers));
         String json = makeCallToQueryApi(url, clientID);
         List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
-        asyncCacheSave(metrics);
+        metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
         return metrics;
     }
-
-
-    public void asyncCacheSave( List<Metric> metrics) {
-        if (metrics == null || metrics.isEmpty()) {
-            return;
-        }
-
-        CompletableFuture.runAsync(() -> {
-            try {
-                metrics.forEach(metric -> {
-                    if (metric != null && metric.getKey() != null) {
-                        metricCache.put(metric.getKey(), metric);
-                    }
-                });
-            } catch (Exception e) {
-                LOG.error("Error asynchronously saving metrics.", e);
-            }
-        });
-    }
-
 
     /** Returns the full metric (incl. meta data from the database).
      * This is only needed if not in cache already - which it should be. */
