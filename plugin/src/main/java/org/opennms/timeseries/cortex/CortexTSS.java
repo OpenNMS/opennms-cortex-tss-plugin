@@ -41,6 +41,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -145,10 +147,15 @@ public class CortexTSS implements TimeSeriesStorage {
 
     public CortexTSS(final CortexTSSConfig config, final KeyValueStore keyValueStore) {
         this.config = Objects.requireNonNull(config);
-        ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
-        Dispatcher dispatcher = new Dispatcher();
-        dispatcher.setMaxRequests(config.getMaxConcurrentHttpConnections());
-        dispatcher.setMaxRequestsPerHost(config.getMaxConcurrentHttpConnections());
+
+        int maxThreads = config.getMaxConcurrentHttpConnections();
+        ConnectionPool connectionPool =
+                new ConnectionPool(maxThreads, 5, TimeUnit.MINUTES);
+        ExecutorService okHttpExecutor = Executors.newFixedThreadPool(maxThreads);
+        Dispatcher dispatcher = new Dispatcher(okHttpExecutor);
+        dispatcher.setMaxRequests(maxThreads);
+        dispatcher.setMaxRequestsPerHost(maxThreads);
+
 
         this.client = new OkHttpClient.Builder()
                 .readTimeout(config.getReadTimeoutInMs(), TimeUnit.MILLISECONDS)
@@ -163,7 +170,7 @@ public class CortexTSS implements TimeSeriesStorage {
         this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
 
         BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
-                .maxConcurrentCalls(config.getMaxConcurrentHttpConnections() * 6)
+                .maxConcurrentCalls(maxThreads * 4)
                 .maxWaitDuration(Duration.ofMillis(config.getBulkheadMaxWaitDurationInMs()))
                 .fairCallHandlingStrategyEnabled(true)
                 .build();
@@ -337,28 +344,41 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     private static PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
-        PrometheusTypes.TimeSeries.Builder builder = PrometheusTypes.TimeSeries.newBuilder();
-        // Convert all of the tags to labels
-        Stream.concat(sample.getMetric().getIntrinsicTags().stream(), sample.getMetric().getMetaTags().stream())
-                .forEach(tag -> {
-                    // Special handling for the metric name
+    // ------------------------------------------------------------------
+    // 1) Translate tags to Prometheus labels (with sanitization)
+    // 2) Sort by label name (lexicographically)
+    // 3) Assemble the TimeSeries with sorted labels
+    // Consistent with the Prometheus remote write spec: https://prometheus.io/docs/specs/prw/remote_write_spec/
+    // ------------------------------------------------------------------
+        List<PrometheusTypes.Label> labels = Stream
+                .concat(sample.getMetric().getIntrinsicTags().stream(),
+                        sample.getMetric().getMetaTags().stream())
+                .map(tag -> {
+                    final String labelName;
+                    final String labelValue;
                     if (IntrinsicTagNames.name.equals(tag.getKey())) {
-                        builder.addLabels(PrometheusTypes.Label.newBuilder()
-                                .setName(METRIC_NAME_LABEL)
-                                .setValue(sanitizeMetricName(tag.getValue())));
+                        labelName = METRIC_NAME_LABEL;
+                        labelValue = sanitizeMetricName(tag.getValue());
                     } else {
-                        builder.addLabels(PrometheusTypes.Label.newBuilder()
-                                .setName(sanitizeLabelName(tag.getKey()))
-                                .setValue(sanitizeLabelValue(tag.getValue())));
+                        labelName = sanitizeLabelName(tag.getKey());
+                        labelValue = sanitizeLabelValue(tag.getValue());
                     }
-                });
+                    return PrometheusTypes.Label.newBuilder()
+                            .setName(labelName)
+                            .setValue(labelValue)
+                            .build();
+                })
+                .sorted(Comparator.comparing(PrometheusTypes.Label::getName))
+                .collect(Collectors.toList());
 
+        PrometheusTypes.TimeSeries.Builder tsBuilder = PrometheusTypes.TimeSeries.newBuilder();
+        labels.forEach(tsBuilder::addLabels);
 
-        // Add the sample timestamp & value
-        builder.addSamples(PrometheusTypes.Sample.newBuilder()
+        tsBuilder.addSamples(PrometheusTypes.Sample.newBuilder()
                 .setTimestamp(sample.getTime().toEpochMilli())
                 .setValue(sample.getValue()));
-        return builder;
+
+        return tsBuilder;
     }
 
     public static String sanitizeMetricName(String metricName) {
@@ -622,7 +642,16 @@ public class CortexTSS implements TimeSeriesStorage {
 
     }
 
-    public void destroy() {
+    public void destroy() throws InterruptedException {
+       ExecutorService executorService =  client.dispatcher().executorService();
+
+       executorService.shutdown();
+
+
+        client.connectionPool().evictAll();
+
+        client.dispatcher().cancelAll();
+
     }
 
     public MetricRegistry getMetrics() {

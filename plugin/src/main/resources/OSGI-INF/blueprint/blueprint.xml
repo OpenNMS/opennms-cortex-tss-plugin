@@ -11,8 +11,8 @@
             <cm:property name="writeUrl" value="http://localhost:9009/api/prom/push" />
             <cm:property name="readUrl" value="http://localhost:9009/prometheus/api/v1" />
             <cm:property name="maxConcurrentHttpConnections" value="100" />
-            <cm:property name="writeTimeoutInMs" value="1000" />
-            <cm:property name="readTimeoutInMs" value="1000" />
+            <cm:property name="writeTimeoutInMs" value="5000" />
+            <cm:property name="readTimeoutInMs" value="5000" />
             <cm:property name="metricCacheSize" value="1000" />
             <cm:property name="externalTagsCacheSize" value="1000" />
             <cm:property name="bulkheadMaxWaitDuration" value="9223372036854775807" />
