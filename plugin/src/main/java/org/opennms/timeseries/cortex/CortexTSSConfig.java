@@ -101,8 +101,8 @@ public class CortexTSSConfig {
         private String writeUrl = "http://localhost:9009/api/prom/push";
         private String readUrl = "http://localhost:9009/prometheus/api/v1";
         private int maxConcurrentHttpConnections = 100;
-        private long writeTimeoutInMs = 1000;
-        private long readTimeoutInMs = 1000;
+        private long writeTimeoutInMs = 5000;
+        private long readTimeoutInMs = 5000;
         private long metricCacheSize = 1000;
         private long externalTagsCacheSize = 1000;
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;

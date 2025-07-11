@@ -1,14 +1,24 @@
 package org.opennms.timeseries.cortex;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.Collections;
 import java.util.Spliterators;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.MappingIterator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.opennms.integration.api.v1.distributed.KeyValueStore;
@@ -25,6 +35,9 @@ import static org.opennms.timeseries.cortex.CortexTSS.METRIC_NAME_LABEL;
 
 
 public class ResultMapper {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final JsonFactory JSON_FACTORY = new JsonFactory(MAPPER);
 
     private ResultMapper(){
     }
@@ -53,13 +66,15 @@ public class ResultMapper {
                 .build();
     }
 
-    public static List<Metric> fromSeriesQueryResult(final String queryResult, final KeyValueStore store) {
-        return new JSONObject(queryResult)
-                .getJSONArray("data")
-                .toList()
-                .stream().map(j -> appendExternalTagsToMetric(toMetricFromMap(((Map<String, String>) j)), store))
-                .collect(Collectors.toList());
+
+    public static List<Metric> fromSeriesQueryResult(
+            final String queryResult,
+            final KeyValueStore store)  {
+
+       return parseMetrics(queryResult,store);
+
     }
+
 
     public static <T> Metric toMetricFromMap(Map<String, T> tags) {
         ImmutableMetric.MetricBuilder metric = ImmutableMetric.builder();
@@ -95,4 +110,44 @@ public class ResultMapper {
             return builder.build();
         } else return metric;
     }
+
+    private static List<Metric> parseMetrics(String json,KeyValueStore store)  {
+        try (JsonParser p = JSON_FACTORY.createParser(json)) {
+
+            if (p.nextToken() != JsonToken.START_OBJECT) {
+                throw new IOException("Invalid JSON");
+            }
+
+
+            while (p.nextToken() != JsonToken.END_OBJECT) {
+                if ("data".equals(p.getCurrentName()) && p.nextToken() == JsonToken.START_ARRAY) {
+
+                    if (p.nextToken() != JsonToken.START_OBJECT) {
+                        return Collections.emptyList();
+                    }
+
+                    MappingIterator<Map<String, String>> iterator =
+                            MAPPER.readValues(p, new TypeReference<Map<String, String>>() {});
+
+                    List<Metric> list = new ArrayList<>();
+                    while (iterator.hasNext()) {
+                        list.add(
+                                appendExternalTagsToMetric(
+                                toMetricFromMap(iterator.next()), store));
+                    }
+                    return list;
+                }
+                p.skipChildren();
+            }
+        } catch (JsonParseException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        return Collections.emptyList();
+    }
+
+
+
+
 }

@@ -41,6 +41,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -145,10 +147,15 @@ public class CortexTSS implements TimeSeriesStorage {
 
     public CortexTSS(final CortexTSSConfig config, final KeyValueStore keyValueStore) {
         this.config = Objects.requireNonNull(config);
-        ConnectionPool connectionPool = new ConnectionPool(config.getMaxConcurrentHttpConnections(), 5, TimeUnit.MINUTES);
-        Dispatcher dispatcher = new Dispatcher();
-        dispatcher.setMaxRequests(config.getMaxConcurrentHttpConnections());
-        dispatcher.setMaxRequestsPerHost(config.getMaxConcurrentHttpConnections());
+
+        int maxThreads = config.getMaxConcurrentHttpConnections();
+        ConnectionPool connectionPool =
+                new ConnectionPool(maxThreads, 5, TimeUnit.MINUTES);
+        ExecutorService okHttpExecutor = Executors.newFixedThreadPool(maxThreads);
+        Dispatcher dispatcher = new Dispatcher(okHttpExecutor);
+        dispatcher.setMaxRequests(maxThreads);
+        dispatcher.setMaxRequestsPerHost(maxThreads);
+
 
         this.client = new OkHttpClient.Builder()
                 .readTimeout(config.getReadTimeoutInMs(), TimeUnit.MILLISECONDS)
@@ -163,7 +170,7 @@ public class CortexTSS implements TimeSeriesStorage {
         this.metricCache = CacheBuilder.newBuilder().maximumSize(config.getMetricCacheSize()).build();
 
         BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
-                .maxConcurrentCalls(config.getMaxConcurrentHttpConnections() * 6)
+                .maxConcurrentCalls(maxThreads * 4)
                 .maxWaitDuration(Duration.ofMillis(config.getBulkheadMaxWaitDurationInMs()))
                 .fairCallHandlingStrategyEnabled(true)
                 .build();
@@ -635,7 +642,16 @@ public class CortexTSS implements TimeSeriesStorage {
 
     }
 
-    public void destroy() {
+    public void destroy() throws InterruptedException {
+       ExecutorService executorService =  client.dispatcher().executorService();
+
+       executorService.shutdown();
+
+
+        client.connectionPool().evictAll();
+
+        client.dispatcher().cancelAll();
+
     }
 
     public MetricRegistry getMetrics() {
