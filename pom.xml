@@ -319,6 +319,25 @@
                             </execution>
                         </executions>
                     </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.8.0</version>
+                        <executions>
+                          <execution>
+                            <id>central-deploy</id>
+                            <phase>deploy</phase>
+                            <goals>
+                              <goal>publish</goal>
+                            </goals>
+                          </execution>
+                        </executions>
+                        <configuration>
+                            <publishingServerId>central-portal</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>uploaded</waitUntil>
+                        </configuration>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
