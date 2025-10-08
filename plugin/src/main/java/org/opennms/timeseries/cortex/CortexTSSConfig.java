@@ -12,6 +12,7 @@ public class CortexTSSConfig {
     private final long metricCacheSize;
     private final long externalTagsCacheSize;
     private final long bulkheadMaxWaitDurationInMs;
+    private final long maxSeriesLookback;
     private final String organizationId;
     private final boolean hasOrganizationId;
 
@@ -28,6 +29,7 @@ public class CortexTSSConfig {
         this.metricCacheSize = builder.metricCacheSize;
         this.externalTagsCacheSize = builder.externalTagsCacheSize;
         this.bulkheadMaxWaitDurationInMs = builder.bulkheadMaxWaitDurationInMs;
+        this.maxSeriesLookback = builder.maxSeriesLookback;
         this.organizationId = builder.organizationId;
         this.hasOrganizationId = organizationId != null && organizationId.trim().length() > 0;
     }
@@ -42,6 +44,7 @@ public class CortexTSSConfig {
             final long metricCacheSize,
             final long externalTagsCacheSize,
             final long bulkheadMaxWaitDurationInMs,
+            final long maxSeriesLookback,
             final String organizationId) {
         this(builder()
                 .writeUrl(writeUrl)
@@ -52,6 +55,7 @@ public class CortexTSSConfig {
                 .metricCacheSize(metricCacheSize)
                 .externalCacheSize(externalTagsCacheSize)
                 .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs)
+                .maxSeriesLookback(maxSeriesLookback)
                 .organizationId(organizationId));
     }
 
@@ -85,6 +89,10 @@ public class CortexTSSConfig {
         return bulkheadMaxWaitDurationInMs;
     }
 
+    public long getMaxSeriesLookback() {
+        return maxSeriesLookback;
+    }
+
     public boolean hasOrganizationId() {
         return hasOrganizationId;
     }
@@ -106,6 +114,7 @@ public class CortexTSSConfig {
         private long metricCacheSize = 1000;
         private long externalTagsCacheSize = 1000;
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;
+        private long maxSeriesLookback = 7776000;
         private String organizationId = null;
 
         public Builder writeUrl(final String writeUrl) {
@@ -148,6 +157,10 @@ public class CortexTSSConfig {
             return this;
         }
 
+        public Builder maxSeriesLookback (final long maxSeriesLookback) {
+            this.maxSeriesLookback = maxSeriesLookback;
+            return this;
+        }
         public Builder organizationId(final String organizationId) {
             this.organizationId = organizationId;
             return this;
@@ -169,6 +182,7 @@ public class CortexTSSConfig {
                 .add("metricCacheSize=" + metricCacheSize)
                 .add("externalCacheSize=" + externalTagsCacheSize)
                 .add("bulkheadMaxWaitDurationInMs=" + bulkheadMaxWaitDurationInMs)
+                .add("maxSeriesLookback=" + maxSeriesLookback)
                 .add("organizationId=" + organizationId)
                 .toString();
     }
