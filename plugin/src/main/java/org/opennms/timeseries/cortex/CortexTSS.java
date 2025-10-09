@@ -31,6 +31,7 @@ package org.opennms.timeseries.cortex;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -424,12 +425,15 @@ public class CortexTSS implements TimeSeriesStorage {
     public List<Metric> findMetrics(Collection<TagMatcher> tagMatchers, String clientID) throws StorageException {
         LOG.info("Retrieving metrics for tagMatchers: {}", tagMatchers);
         Objects.requireNonNull(tagMatchers);
+        Instant instant = Instant.now();
+        long start = instant.getEpochSecond() - config.getMaxSeriesLookback(); // 90 days in seconds
         if(tagMatchers.isEmpty()) {
             throw new IllegalArgumentException("tagMatchers cannot be null");
         }
-        String url = String.format("%s/series?match[]={%s}",
+        String url = String.format("%s/series?match[]={%s}&start=%d",
                 config.getReadUrl(),
-                tagMatchersToQuery(tagMatchers));
+                tagMatchersToQuery(tagMatchers),
+                start);
         String json = makeCallToQueryApi(url, clientID);
         List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
         metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
