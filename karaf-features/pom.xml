@@ -48,6 +48,12 @@
                                 <artifact>
                                     <file>${project.build.outputDirectory}/features.xml</file>
                                     <type>xml</type>
+                                    <!-- Karaf convention: features repos resolve as <artifact>/<version>/xml/features.
+                                         The kar built by karaf-maven-plugin references this artifact with the
+                                         'features' classifier, so attaching without it makes kar deployment fail
+                                         ("Could not find artifact ...:xml:features:...") and Karaf then tears the
+                                         feature down. -->
+                                    <classifier>features</classifier>
                                 </artifact>
                             </artifacts>
                         </configuration>

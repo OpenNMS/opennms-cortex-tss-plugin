@@ -39,7 +39,7 @@ org.opennms.timeseries.tin.metatags.tag.ifDescr=${interface:if-description}' >> 
 
 From the OpenNMS Karaf shell:
 ```
-feature:repo-add mvn:org.opennms.plugins.timeseries/prometheus-remotewrite-karaf-features/2.1.0/xml
+feature:repo-add mvn:org.opennms.plugins.timeseries/prometheus-remotewrite-karaf-features/2.2.0/xml/features
 feature:install opennms-plugins-prometheus-remotewrite
 ```
 
