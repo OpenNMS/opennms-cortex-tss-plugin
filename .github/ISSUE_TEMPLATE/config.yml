@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / usage help
+    url: https://opennms.discourse.group/
+    about: Please ask usage questions in the OpenNMS community forum.
+  - name: Chat with the community
+    url: https://chat.opennms.com/
+    about: Reach the OpenNMS community on Mattermost for quick questions.
+  - name: Security vulnerability
+    url: https://github.com/OpenNMS-Plugins/opennms-prometheus-remotewrite-plugin/security/advisories/new
+    about: Report security issues privately — do not open a public issue.

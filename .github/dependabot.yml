@@ -3,7 +3,7 @@ updates:
 
   - package-ecosystem: "maven"
     directory: "/"
-    target-branch: "release-2.x"
+    target-branch: "main"
     reviewers:
       - "OpenNMS/dependabot-reviewers-maven"
     labels:
@@ -13,3 +13,22 @@ updates:
       include: "scope"
     schedule:
       interval: "daily"
+    ignore:
+      # Karaf must stay aligned with the Meridian foundation branches
+      # (2023/2024/2025 all ship Karaf 4.3.10). Building against 4.4+
+      # produces an Import-Package range [4.4,5) that fails to resolve
+      # there. See PR #135.
+      - dependency-name: "org.apache.karaf*"
+        versions: [">= 4.4.0"]
+      # slf4j 2.x widens the bundle's org.slf4j import to [2.0,3), which
+      # Karaf 4.3.10 (pax-logging exports 1.7.x) cannot resolve. Chained
+      # behind the Karaf 4.4 upgrade above. See PR #93.
+      - dependency-name: "org.slf4j*"
+        versions: [">= 2.0.0"]
+      # kotlin.version pins the kotlin-stdlib that backs okhttp 4.12.0,
+      # which is built against kotlin 1.9.x. In kotlin 2.x the managed
+      # kotlin-stdlib-jdk8/-common artifacts are empty relocation shells,
+      # so the pin stops working. Lift when okhttp moves to a kotlin
+      # 2.x-based release. See PR #143.
+      - dependency-name: "org.jetbrains.kotlin*"
+        versions: [">= 2.0.0"]

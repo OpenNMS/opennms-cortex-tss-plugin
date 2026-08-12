@@ -15,6 +15,8 @@ public class CortexTSSConfig {
     private final long maxSeriesLookback;
     private final String organizationId;
     private final boolean hasOrganizationId;
+    private final long callTimeoutInMs;
+    private final boolean asyncWrites;
 
     public CortexTSSConfig() {
         this(builder());
@@ -32,6 +34,8 @@ public class CortexTSSConfig {
         this.maxSeriesLookback = builder.maxSeriesLookback;
         this.organizationId = builder.organizationId;
         this.hasOrganizationId = organizationId != null && organizationId.trim().length() > 0;
+        this.callTimeoutInMs = builder.callTimeoutInMs;
+        this.asyncWrites = builder.asyncWrites;
     }
 
     /** Will be called via blueprint. The builder can be called when not running as Osgi plugin. */
@@ -45,7 +49,9 @@ public class CortexTSSConfig {
             final long externalTagsCacheSize,
             final long bulkheadMaxWaitDurationInMs,
             final long maxSeriesLookback,
-            final String organizationId) {
+            final String organizationId,
+            final long callTimeoutInMs,
+            final boolean asyncWrites) {
         this(builder()
                 .writeUrl(writeUrl)
                 .readUrl(readUrl)
@@ -56,7 +62,9 @@ public class CortexTSSConfig {
                 .externalCacheSize(externalTagsCacheSize)
                 .bulkheadMaxWaitDurationInMs(bulkheadMaxWaitDurationInMs)
                 .maxSeriesLookback(maxSeriesLookback)
-                .organizationId(organizationId));
+                .organizationId(organizationId)
+                .callTimeoutInMs(callTimeoutInMs)
+                .asyncWrites(asyncWrites));
     }
 
     public String getWriteUrl() {
@@ -101,6 +109,24 @@ public class CortexTSSConfig {
         return organizationId;
     }
 
+    /**
+     * Budget for a whole remote write call: connect, write, backend processing and reading the ack.
+     * Distinct from {@link #getWriteTimeoutInMs()}, which only bounds writing the request body.
+     */
+    public long getCallTimeoutInMs() {
+        return callTimeoutInMs;
+    }
+
+    /**
+     * When true, {@code store()} dispatches the write and returns without waiting for it, and
+     * failures are logged rather than reported to the caller. This is the pre-2.2.0 behaviour, kept
+     * as an escape hatch for deployments where blocking the OpenNMS writer threads is worse than
+     * losing the error.
+     */
+    public boolean isAsyncWrites() {
+        return asyncWrites;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -116,6 +142,8 @@ public class CortexTSSConfig {
         private long bulkheadMaxWaitDurationInMs = Long.MAX_VALUE;
         private long maxSeriesLookback = 7776000;
         private String organizationId = null;
+        private long callTimeoutInMs = 10000;
+        private boolean asyncWrites = false;
 
         public Builder writeUrl(final String writeUrl) {
             this.writeUrl = writeUrl;
@@ -166,6 +194,16 @@ public class CortexTSSConfig {
             return this;
         }
 
+        public Builder callTimeoutInMs(final long callTimeoutInMs) {
+            this.callTimeoutInMs = callTimeoutInMs;
+            return this;
+        }
+
+        public Builder asyncWrites(final boolean asyncWrites) {
+            this.asyncWrites = asyncWrites;
+            return this;
+        }
+
         public CortexTSSConfig build() {
             return new CortexTSSConfig(this);
         }
@@ -184,6 +222,8 @@ public class CortexTSSConfig {
                 .add("bulkheadMaxWaitDurationInMs=" + bulkheadMaxWaitDurationInMs)
                 .add("maxSeriesLookback=" + maxSeriesLookback)
                 .add("organizationId=" + organizationId)
+                .add("callTimeoutInMs=" + callTimeoutInMs)
+                .add("asyncWrites=" + asyncWrites)
                 .toString();
     }
 }

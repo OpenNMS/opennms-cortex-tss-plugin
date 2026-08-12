@@ -57,10 +57,17 @@ commands:
 workflows:
   build-deploy:
     jobs:
-      - build
+      - build:
+          filters:
+            tags:
+              only: /^v.*/
       - tests:
           requires:
             - build
+          filters:
+            tags:
+              only: /^v.*/ 
+      # Keeping this just in case want to merge to main after we have created a release branch.
       - merge:
           requires:
             - tests
@@ -75,10 +82,11 @@ workflows:
             - "gpg-signing"
           requires:
             - tests
-          filters:
-            branches:
-              only:
-                - master
+          # filters:
+          #   tags:
+          #     only: /^v.*/
+          #   branches:
+          #     ignore: /.*/
 
 jobs:
   build:
@@ -120,14 +128,14 @@ jobs:
           committer_email: "cicd-system@opennms.com"
           committer_name: "CI/CD System"
           from: release-2.x
-          to: master
+          to: main
 
       # make sure the build passes after merge
       - build
 
       - run:
-          name: "Push to Master"
-          command: git push --no-verify origin master:master
+          name: "Push to Main"
+          command: git push --no-verify origin main:main
 
   deploy:
     executor: build-executor

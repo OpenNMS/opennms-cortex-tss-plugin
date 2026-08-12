@@ -43,9 +43,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -129,7 +132,13 @@ public class CortexTSS implements TimeSeriesStorage {
 
     final static int MAX_SAMPLES = 1200;
 
+    /** Fallback when the configured call timeout is unusable. Matches CortexTSSConfig's default. */
+    private static final long DEFAULT_CALL_TIMEOUT_MS = 10000;
+
     private final OkHttpClient client;
+
+    /** The configured call timeout after clamping to what OkHttp accepts. See sanitizeCallTimeout. */
+    private final long callTimeoutInMs;
 
     private final MetricRegistry metrics = new MetricRegistry();
     private final Meter samplesWritten = metrics.meter("samplesWritten");
@@ -160,9 +169,16 @@ public class CortexTSS implements TimeSeriesStorage {
         dispatcher.setMaxRequestsPerHost(maxThreads);
 
 
+        this.callTimeoutInMs = sanitizeCallTimeout(config.getCallTimeoutInMs());
+
         this.client = new OkHttpClient.Builder()
                 .readTimeout(config.getReadTimeoutInMs(), TimeUnit.MILLISECONDS)
                 .writeTimeout(config.getWriteTimeoutInMs(), TimeUnit.MILLISECONDS)
+                // Bounds the call once it has been dequeued by the dispatcher - connect, write,
+                // backend processing and reading the ack - and cancels it when it fires. Note it
+                // does not cover time spent queued: if maxConcurrentHttpConnections is smaller than
+                // the number of OpenNMS writer threads, a caller can wait a multiple of this.
+                .callTimeout(this.callTimeoutInMs, TimeUnit.MILLISECONDS)
                 .dispatcher(dispatcher)
                 .connectionPool(connectionPool)
                 .build();
@@ -202,6 +218,14 @@ public class CortexTSS implements TimeSeriesStorage {
                 .sorted(Comparator.comparing(Sample::getTime))
                 .collect(Collectors.toList());
 
+        if (samplesSorted.isEmpty()) {
+            // Nothing survived the NaN filter. Posting an empty WriteRequest would cost a round trip
+            // - and, on the synchronous path, block a writer thread and possibly throw - to store
+            // nothing at all.
+            LOG.trace("No storable samples in a batch of {}, skipping the write.", samples.size());
+            return;
+        }
+
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
         samplesSorted.forEach(s -> {
 
@@ -235,15 +259,106 @@ public class CortexTSS implements TimeSeriesStorage {
         final Request request = builder.build();
 
         LOG.trace("Writing: {}", writeRequest);
-        asyncHttpCallsBulkhead.executeCompletionStage(() -> executeAsync(request)).whenComplete((r, ex) -> {
-            if (ex == null) {
-                samplesWritten.mark(samplesSorted.size());
-            } else {
-                // FIXME: Data loss
-                samplesLost.mark(samples.size());
-                LOG.error("Error occurred while storing samples, sample will be lost.", ex);
-            }
-        });
+
+        if (config.isAsyncWrites()) {
+            asyncHttpCallsBulkhead.executeCompletionStage(() -> executeAsync(request)).whenComplete((r, ex) -> {
+                if (ex == null) {
+                    samplesWritten.mark(samplesSorted.size());
+                } else {
+                    // FIXME: Data loss - store() has already returned, so the caller was told the
+                    // batch was accepted and has no way to learn otherwise.
+                    samplesLost.mark(samplesSorted.size());
+                    LOG.error("Error occurred while storing samples, sample will be lost.", ex);
+                }
+            });
+            return;
+        }
+
+        // Wait for the write to land so a failure reaches the caller instead of being logged and
+        // forgotten. Note this does not establish per-series ordering: OpenNMS dispatches
+        // consecutive batches across writer_threads (16 by default), so batches race regardless of
+        // what happens here. See https://github.com/OpenNMS-Plugins/opennms-prometheus-remotewrite-plugin/issues/132
+        final AtomicReference<Call> inFlight = new AtomicReference<>();
+        try {
+            asyncHttpCallsBulkhead.executeCompletionStage(() -> enqueue(request, inFlight))
+                    .toCompletableFuture()
+                    .get(writeBackstopTimeoutInMs(), TimeUnit.MILLISECONDS);
+            samplesWritten.mark(samplesSorted.size());
+        } catch (InterruptedException e) {
+            // Abandoning the call is not enough: without cancelling, the request can still land
+            // after we have reported the batch lost, which both over-counts samplesLost and
+            // produces exactly the late, out-of-order write we are trying to avoid.
+            cancelQuietly(inFlight);
+            Thread.currentThread().interrupt();
+            samplesLost.mark(samplesSorted.size());
+            throw storageException("Interrupted while writing samples to Prometheus", e);
+        } catch (ExecutionException | TimeoutException e) {
+            cancelQuietly(inFlight); // no-op when the call already finished
+            samplesLost.mark(samplesSorted.size());
+            final Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw storageException("Failed to write samples to Prometheus", cause);
+        }
+    }
+
+    /**
+     * StorageException(String, Throwable) discards the message - it delegates to
+     * Exception(Throwable) - so the context has to be attached the long way round if it is to
+     * survive into the operator's log.
+     */
+    private static StorageException storageException(final String message, final Throwable cause) {
+        final StorageException e = new StorageException(message + ": " + cause);
+        e.initCause(cause);
+        return e;
+    }
+
+    private static void cancelQuietly(final AtomicReference<Call> inFlight) {
+        final Call call = inFlight.get();
+        if (call != null) {
+            call.cancel();
+        }
+    }
+
+    /**
+     * Backstop for the blocking {@code get()}, covering the window between the bulkhead handing out
+     * a permit and the call completing.
+     *
+     * <p>It deliberately does <em>not</em> bound the wait for the permit itself: resilience4j
+     * acquires that on the calling thread inside {@code executeCompletionStage}, before the
+     * CompletionStage this future wraps even exists. With bulkheadMaxWaitDurationInMs left at its
+     * {@link Long#MAX_VALUE} default that wait is unbounded, and only a finite
+     * bulkheadMaxWaitDurationInMs can bound it. In practice the bulkhead permits
+     * (maxConcurrentHttpConnections * 4) far exceed the number of OpenNMS writer threads, so it is
+     * not reachable in a default deployment.
+     *
+     * <p>Saturates instead of overflowing, for the same {@link Long#MAX_VALUE} default.
+     */
+    private long writeBackstopTimeoutInMs() {
+        final long bulkheadWait = config.getBulkheadMaxWaitDurationInMs();
+        if (bulkheadWait > Long.MAX_VALUE - callTimeoutInMs) {
+            return Long.MAX_VALUE;
+        }
+        return callTimeoutInMs + bulkheadWait;
+    }
+
+    /**
+     * OkHttp rejects a call timeout above {@link Integer#MAX_VALUE} milliseconds and treats zero as
+     * "no timeout at all". Either would come from a plausible {@code config:edit} - the README
+     * shows {@code Long.MAX_VALUE} for bulkheadMaxWaitDurationInMs a few lines away - and neither
+     * should take the plugin down or silently unbound a writer thread, so clamp and warn.
+     */
+    private static long sanitizeCallTimeout(final long configured) {
+        if (configured <= 0) {
+            LOG.warn("callTimeoutInMs={} is not a positive duration. OkHttp would read that as no timeout at all, "
+                    + "letting an OpenNMS writer thread park indefinitely on an unhealthy backend. Using {}ms.",
+                    configured, DEFAULT_CALL_TIMEOUT_MS);
+            return DEFAULT_CALL_TIMEOUT_MS;
+        }
+        if (configured > Integer.MAX_VALUE) {
+            LOG.warn("callTimeoutInMs={} exceeds the largest value OkHttp accepts. Clamping to {}ms.",
+                    configured, Integer.MAX_VALUE);
+            return Integer.MAX_VALUE;
+        }
+        return configured;
     }
 
     private void persistExternalTags(final Sample s) {
@@ -314,8 +429,18 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public CompletableFuture<Void> executeAsync(Request request) {
+        return enqueue(request, new AtomicReference<>());
+    }
+
+    /**
+     * As {@link #executeAsync(Request)}, but publishes the {@link Call} into {@code handle} so a
+     * caller that stops waiting can cancel the request rather than leave it in flight.
+     */
+    private CompletableFuture<Void> enqueue(Request request, AtomicReference<Call> handle) {
         final CompletableFuture<Void> future = new CompletableFuture<>();
-        client.newCall(request).enqueue(new Callback() {
+        final Call call = client.newCall(request);
+        handle.set(call);
+        call.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
                 future.completeExceptionally(e);

@@ -18,6 +18,8 @@
             <cm:property name="bulkheadMaxWaitDuration" value="9223372036854775807" />
             <cm:property name="maxSeriesLookback" value="7776000" />
             <cm:property name="organizationId" value="" />
+            <cm:property name="callTimeoutInMs" value="10000" />
+            <cm:property name="asyncWrites" value="false" />
         </cm:default-properties>
     </cm:property-placeholder>
 
@@ -32,6 +34,8 @@
         <argument value="${bulkheadMaxWaitDuration}" />
         <argument value="${maxSeriesLookback}" />
         <argument value="${organizationId}" />
+        <argument value="${callTimeoutInMs}" />
+        <argument value="${asyncWrites}" />
     </bean>
 
     <!--Key-value store -->

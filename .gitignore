@@ -33,3 +33,9 @@ java/bin/
 .DS_Store
 # Frontend
 node_modules/
+
+# AI tools
+.claude/settings.local.json
+_bmad-output/
+_bmad/
+openspec/

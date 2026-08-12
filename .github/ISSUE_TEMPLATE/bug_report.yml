@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a problem with the plugin
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including any error output or stack traces.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: "2.1.0"
+    validations:
+      required: true
+  - type: input
+    id: opennms-version
+    attributes:
+      label: OpenNMS version
+    validations:
+      required: true
+  - type: input
+    id: backend
+    attributes:
+      label: remote_write backend
+      placeholder: "Cortex / Mimir / Thanos / VictoriaMetrics / Prometheus + version"
+    validations:
+      required: false

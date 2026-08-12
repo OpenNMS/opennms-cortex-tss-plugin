@@ -5,7 +5,7 @@
     <artifactId>prometheus-remotewrite-parent</artifactId>
     <name>OpenNMS :: Plugins :: Prometheus RemoteWrite :: Parent</name>
     <packaging>pom</packaging>
-    <version>2.1.1-SNAPSHOT</version>
+    <version>2.2.0-SNAPSHOT</version>
 
     <description>Time-Series Storage Plugin for OpenNMS (Prometheus remote_write)</description>
     <url>https://github.com/OpenNMS-Plugins/opennms-prometheus-remotewrite-plugin/</url>
@@ -69,17 +69,19 @@
              alarm-notifications plugin). A higher patch forces Karaf to update the
              shared guava bundle and refresh core, which takes the web app down. -->
         <guava.version>33.2.0-jre</guava.version>
-        <hamcrest.version>2.2</hamcrest.version>
+        <hamcrest.version>3.0</hamcrest.version>
         <java.version>17</java.version>
         <json.version>20240303</json.version>
         <junit.version>4.13.2</junit.version>
         <karaf.version>4.3.10</karaf.version>
         <karaf.plugin.version>4.4.6</karaf.plugin.version>
         <kotlin.version>1.9.10</kotlin.version>
-        <log4j.version>2.23.1</log4j.version>
-        <mockito.version>5.12.0</mockito.version>
+        <log4j.version>2.26.1</log4j.version>
+        <mockito.version>5.23.0</mockito.version>
         <metrics.version>4.2.25</metrics.version>
         <okio.bundle.version>1.15.0_1</okio.bundle.version>
+        <!-- must match the okio pulled in transitively by okhttp ${okhttp.version} -->
+        <okio.version>3.6.0</okio.version>
         <okhttp.version>4.12.0</okhttp.version>
         <!-- Match the jackson already running in this OpenNMS (alarm-notifications
              plugin loads 2.17.1) so the REST JSON bundles resolve to existing ones. -->
@@ -88,10 +90,10 @@
         <opennms.api.version>2.0.0</opennms.api.version>
         <osgi.version>6.0.0</osgi.version>
         <osgi.compendium.version>5.0.0</osgi.compendium.version>
-        <protoc.version>3.25.3</protoc.version>
+        <protoc.version>3.25.5</protoc.version>
         <resilience4j.version>1.7.1</resilience4j.version>
         <slf4j-api.version>1.7.36</slf4j-api.version>
-        <snappy.version>1.1.10.5</snappy.version>
+        <snappy.version>1.1.10.8</snappy.version>
     </properties>
 
     <modules>
@@ -211,7 +213,7 @@
                 <plugin>
                     <groupId>org.apache.felix</groupId>
                     <artifactId>maven-bundle-plugin</artifactId>
-                    <version>5.1.9</version>
+                    <version>6.0.2</version>
                     <extensions>true</extensions>
                     <configuration>
                         <instructions>
@@ -222,7 +224,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.13.0</version>
+                    <version>3.15.0</version>
                     <configuration>
                         <source>${java.version}</source>
                         <target>${java.version}</target>
@@ -236,17 +238,17 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-resources-plugin</artifactId>
-                    <version>3.3.1</version>
+                    <version>3.5.0</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-shade-plugin</artifactId>
-                    <version>3.6.0</version>
+                    <version>3.6.2</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.2.5</version>
+                    <version>3.5.6</version>
                     <configuration>
                         <excludes>
                             <exclude>**/*IT.java</exclude>
