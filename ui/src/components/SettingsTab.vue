@@ -232,15 +232,16 @@ function onLookbackChange(v: number | null) {
 .settings__integration {
   margin-top: 2rem;
   padding: 1rem 1.25rem;
-  border: 1px solid var(--p-orange-200, #f6d0a2);
-  background: var(--p-orange-50, #fdf6ee);
+  border: 1px solid var(--p-content-border-color, rgba(10, 12, 27, 0.12));
+  border-left: 4px solid var(--p-orange-400, #cc8925);
+  background: var(--p-content-background, #fff);
   border-radius: 6px;
 }
 .settings__integration h2 {
   font-size: 0.95rem;
   font-weight: 600;
   margin: 0 0 0.4rem;
-  color: var(--p-orange-800, #7a5000);
+  color: var(--p-text-color, rgba(10, 12, 27, 0.9));
 }
 .settings__integration p {
   margin: 0 0 0.5rem;
@@ -260,6 +261,6 @@ function onLookbackChange(v: number | null) {
 .settings__integration-note {
   margin-top: 0.6rem !important;
   font-size: 0.75rem !important;
-  color: var(--p-orange-700, #9a7400) !important;
+  color: var(--p-text-muted-color, rgba(10, 12, 27, 0.6)) !important;
 }
 </style>

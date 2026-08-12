@@ -28,13 +28,13 @@ defineProps<{
   gap: 0.6rem;
 }
 .issue {
-  border-left: 4px solid var(--p-orange-500, #9a7400);
+  border-left: 4px solid var(--p-orange-400, #cc8925);
   padding: 0.6rem 0.9rem;
   border-radius: 0 6px 6px 0;
   background: var(--p-content-hover-background, rgba(10, 12, 27, 0.03));
 }
 .issue--error {
-  border-left-color: var(--p-red-500, #c5221f);
+  border-left-color: var(--p-red-400, #c5221f);
 }
 .issue__title {
   display: flex;

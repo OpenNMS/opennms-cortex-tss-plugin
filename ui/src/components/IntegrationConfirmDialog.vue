@@ -77,8 +77,9 @@ import {
   align-items: flex-start;
   gap: 0.6rem;
   padding: 0.6rem 0.75rem;
-  background: var(--p-orange-50, #fef9e7);
-  border: 1px solid var(--p-orange-200, #f5e0a2);
+  background: var(--p-content-hover-background, rgba(10, 12, 27, 0.03));
+  border: 1px solid var(--p-content-border-color, rgba(10, 12, 27, 0.12));
+  border-left: 4px solid var(--p-orange-400, #cc8925);
   border-radius: 4px;
   margin-bottom: 0.9rem;
 }

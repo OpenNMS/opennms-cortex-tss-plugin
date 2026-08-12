@@ -226,12 +226,13 @@ onUnmounted(() => { if (statsTimer) clearInterval(statsTimer) })
 
 <style scoped>
 .stats__inactive {
-  border: 1px solid var(--p-red-200, #f6aea9);
-  background: var(--p-red-50, #fdf3f2);
+  border: 1px solid var(--p-content-border-color, rgba(10, 12, 27, 0.12));
+  border-left: 4px solid var(--p-red-400, #c5221f);
+  background: var(--p-content-background, #fff);
   border-radius: 6px;
   padding: 1rem 1.25rem;
   font-size: 0.8125rem;
-  color: var(--p-red-800, #7a1c17);
+  color: var(--p-text-color, rgba(10, 12, 27, 0.85));
 }
 .stats__toolbar {
   display: flex;

@@ -119,8 +119,9 @@ import TestResultList from './TestResultList.vue'
 
 <style scoped>
 .blocked {
-  border: 1px solid var(--p-orange-200, #f5e0a2);
-  background: var(--p-orange-50, #fef9e7);
+  border: 1px solid var(--p-content-border-color, rgba(10, 12, 27, 0.12));
+  border-left: 4px solid var(--p-orange-400, #cc8925);
+  background: var(--p-content-background, #fff);
   border-radius: 8px;
   padding: 1.5rem 1.75rem;
 }
@@ -131,7 +132,7 @@ import TestResultList from './TestResultList.vue'
   gap: 0.5rem;
   margin-bottom: 0.6rem;
   font-size: 1.05rem;
-  color: var(--p-orange-800, #7a6000);
+  color: var(--p-text-color, rgba(10, 12, 27, 0.9));
 }
 .blocked__pending-head {
   font-size: 0.875rem;
@@ -141,7 +142,7 @@ import TestResultList from './TestResultList.vue'
 .blocked__intro {
   margin: 0 0 1rem;
   font-size: 0.875rem;
-  color: var(--p-orange-800, #7a6000);
+  color: var(--p-text-muted-color, rgba(10, 12, 27, 0.7));
 }
 .blocked__source {
   opacity: 0.75;
@@ -152,12 +153,12 @@ import TestResultList from './TestResultList.vue'
 .blocked__section {
   margin-top: 1.5rem;
   padding-top: 1.1rem;
-  border-top: 1px solid var(--p-orange-300, rgba(154, 116, 0, 0.3));
+  border-top: 1px solid var(--p-content-border-color, rgba(10, 12, 27, 0.12));
 }
 .blocked__section-title {
   font-weight: 600;
   font-size: 0.875rem;
-  color: var(--p-orange-800, #7a6000);
+  color: var(--p-text-color, rgba(10, 12, 27, 0.9));
   margin-bottom: 0.35rem;
 }
 .blocked__section-text {
@@ -188,6 +189,6 @@ import TestResultList from './TestResultList.vue'
 .blocked__locked-reason {
   margin: 0.5rem 0 0;
   font-size: 0.75rem;
-  color: var(--p-orange-700, #9a7400);
+  color: var(--p-text-muted-color, rgba(10, 12, 27, 0.6));
 }
 </style>

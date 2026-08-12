@@ -45,15 +45,15 @@ defineProps<{
   gap: 0.5rem;
 }
 .result {
-  border: 1px solid var(--p-green-200, #b7dfc3);
-  background: var(--p-green-50, #f3faf5);
+  border: 1px solid var(--p-content-border-color, rgba(10, 12, 27, 0.12));
+  border-left: 4px solid var(--p-green-400, #137333);
+  background: var(--p-content-background, #fff);
   border-radius: 4px;
   padding: 0.625rem 0.875rem;
   font-size: 0.8125rem;
 }
 .result--fail {
-  border-color: var(--p-red-200, #f6aea9);
-  background: var(--p-red-50, #fdf3f2);
+  border-left-color: var(--p-red-400, #c5221f);
 }
 .result__head {
   display: flex;
@@ -77,6 +77,6 @@ defineProps<{
 }
 .result__note {
   margin-top: 0.15rem;
-  color: var(--p-orange-700, #7a6000);
+  color: var(--p-text-muted-color, rgba(10, 12, 27, 0.6));
 }
 </style>

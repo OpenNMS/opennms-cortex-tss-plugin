@@ -39,8 +39,9 @@ const emit = defineEmits<{
 
 <style scoped>
 .unreachable {
-  border: 1px solid var(--p-red-200, #f6aea9);
-  background: var(--p-red-50, #fdf3f2);
+  border: 1px solid var(--p-content-border-color, rgba(10, 12, 27, 0.12));
+  border-left: 4px solid var(--p-red-400, #c5221f);
+  background: var(--p-content-background, #fff);
   border-radius: 8px;
   padding: 1.5rem 1.75rem;
 }
@@ -50,12 +51,12 @@ const emit = defineEmits<{
   gap: 0.5rem;
   margin-bottom: 0.6rem;
   font-size: 1.05rem;
-  color: var(--p-red-800, #7a1c17);
+  color: var(--p-text-color, rgba(10, 12, 27, 0.9));
 }
 .unreachable__text {
   margin: 0 0 0.75rem;
   font-size: 0.875rem;
-  color: var(--p-text-color, rgba(10, 12, 27, 0.75));
+  color: var(--p-text-muted-color, rgba(10, 12, 27, 0.75));
 }
 .unreachable__error {
   margin: 0 0 1rem;
