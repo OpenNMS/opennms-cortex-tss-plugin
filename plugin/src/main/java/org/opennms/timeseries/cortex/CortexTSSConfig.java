@@ -24,6 +24,7 @@ public class CortexTSSConfig {
     private final int batchShardCapacity;
     private final int batchMaxRetries;
     private final long batchRetryBackoffMs;
+    private final long batchEnqueueTimeoutMs;
 
     public CortexTSSConfig() {
         this(builder());
@@ -50,6 +51,7 @@ public class CortexTSSConfig {
         this.batchShardCapacity = builder.batchShardCapacity;
         this.batchMaxRetries = builder.batchMaxRetries;
         this.batchRetryBackoffMs = builder.batchRetryBackoffMs;
+        this.batchEnqueueTimeoutMs = builder.batchEnqueueTimeoutMs;
     }
 
     /** Will be called via blueprint. The builder can be called when not running as Osgi plugin. */
@@ -72,7 +74,8 @@ public class CortexTSSConfig {
             final long batchLingerMs,
             final int batchShardCapacity,
             final int batchMaxRetries,
-            final long batchRetryBackoffMs) {
+            final long batchRetryBackoffMs,
+            final long batchEnqueueTimeoutMs) {
         this(builder()
                 .writeUrl(writeUrl)
                 .readUrl(readUrl)
@@ -92,7 +95,8 @@ public class CortexTSSConfig {
                 .batchLingerMs(batchLingerMs)
                 .batchShardCapacity(batchShardCapacity)
                 .batchMaxRetries(batchMaxRetries)
-                .batchRetryBackoffMs(batchRetryBackoffMs));
+                .batchRetryBackoffMs(batchRetryBackoffMs)
+                .batchEnqueueTimeoutMs(batchEnqueueTimeoutMs));
     }
 
     public String getWriteUrl() {
@@ -191,6 +195,14 @@ public class CortexTSSConfig {
         return batchRetryBackoffMs;
     }
 
+    /**
+     * Upper bound on how long one {@code store()} call may block on full shards before the write
+     * fails, shared across all samples of the call rather than paid per sample.
+     */
+    public long getBatchEnqueueTimeoutMs() {
+        return batchEnqueueTimeoutMs;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -215,6 +227,7 @@ public class CortexTSSConfig {
         private int batchShardCapacity = 65536;
         private int batchMaxRetries = 3;
         private long batchRetryBackoffMs = 1000;
+        private long batchEnqueueTimeoutMs = 5000;
 
         public Builder writeUrl(final String writeUrl) {
             this.writeUrl = writeUrl;
@@ -310,6 +323,11 @@ public class CortexTSSConfig {
             return this;
         }
 
+        public Builder batchEnqueueTimeoutMs(final long batchEnqueueTimeoutMs) {
+            this.batchEnqueueTimeoutMs = batchEnqueueTimeoutMs;
+            return this;
+        }
+
         public CortexTSSConfig build() {
             return new CortexTSSConfig(this);
         }
@@ -337,6 +355,7 @@ public class CortexTSSConfig {
                 .add("batchShardCapacity=" + batchShardCapacity)
                 .add("batchMaxRetries=" + batchMaxRetries)
                 .add("batchRetryBackoffMs=" + batchRetryBackoffMs)
+                .add("batchEnqueueTimeoutMs=" + batchEnqueueTimeoutMs)
                 .toString();
     }
 }

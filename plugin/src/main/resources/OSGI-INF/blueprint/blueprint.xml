@@ -27,6 +27,7 @@
             <cm:property name="batchShardCapacity" value="65536" />
             <cm:property name="batchMaxRetries" value="3" />
             <cm:property name="batchRetryBackoffMs" value="1000" />
+            <cm:property name="batchEnqueueTimeoutMs" value="5000" />
         </cm:default-properties>
     </cm:property-placeholder>
 
@@ -50,6 +51,7 @@
         <argument value="${batchShardCapacity}" />
         <argument value="${batchMaxRetries}" />
         <argument value="${batchRetryBackoffMs}" />
+        <argument value="${batchEnqueueTimeoutMs}" />
     </bean>
 
     <!--Key-value store -->

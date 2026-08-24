@@ -24,6 +24,7 @@ package org.opennms.timeseries.cortex.batch;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -149,6 +150,60 @@ public class ShardedWriteBatcherTest {
         assertTrue(orgs.contains("org-b"));
     }
 
+    /**
+     * Meta tags are not part of {@code Metric.getKey()}, but they are part of the emitted label
+     * set, so two samples that differ only in a meta tag are two different wire series. Coalescing
+     * them would silently store one sample's value under the other's labels.
+     */
+    @Test
+    public void keepsSamplesWithDifferentMetaTagsOnSeparateSeries() {
+        batcher = builder().shardCount(1).maxBatchSamples(2).lingerMs(60_000).build();
+
+        batcher.enqueue(sample(metricWithMtype("meta_change", Metric.Mtype.gauge), BASE, 1.0), null);
+        batcher.enqueue(sample(metricWithMtype("meta_change", Metric.Mtype.counter), BASE.plusSeconds(1), 2.0), null);
+
+        SentBatch sent = sender.awaitNext();
+        assertEquals("a changed meta tag is a different wire series", 2, sent.request.getTimeseriesCount());
+        for (PrometheusTypes.TimeSeries ts : sent.request.getTimeseriesList()) {
+            assertEquals(1, ts.getSamplesCount());
+            double expected = Metric.Mtype.gauge.name().equals(labelValue(ts, "mtype")) ? 1.0 : 2.0;
+            assertEquals("each sample must sit under its own label set",
+                    expected, ts.getSamples(0).getValue(), 0.0);
+        }
+    }
+
+    /**
+     * Sanitization is lossy: distinct raw metric keys can emit one and the same label set. Those
+     * samples are one wire series and must flow through one shard as one TimeSeries entry, or two
+     * shards write the same series in parallel, which the remote-write spec forbids.
+     */
+    @Test
+    public void coalescesSeriesWhoseRawKeysSanitizeIdentically() {
+        batcher = builder().shardCount(8).maxBatchSamples(2).lingerMs(60_000).build();
+
+        Metric dotted = ImmutableMetric.builder()
+                .intrinsicTag("resourceId", "test/collide")
+                .intrinsicTag("name", "collide.a")
+                .metaTag("mtype", Metric.Mtype.gauge.name())
+                .build();
+        Metric slashed = ImmutableMetric.builder()
+                .intrinsicTag("resourceId", "test/collide")
+                .intrinsicTag("name", "collide/a")
+                .metaTag("mtype", Metric.Mtype.gauge.name())
+                .build();
+
+        batcher.enqueue(sample(dotted, BASE, 1.0), null);
+        batcher.enqueue(sample(slashed, BASE.plusSeconds(1), 2.0), null);
+
+        // Same wire identity, so same shard and same TimeSeries entry: one request, one series,
+        // both samples in order. On raw-key hashing the two would land apart and this times out
+        // or arrives as duplicate label sets.
+        SentBatch sent = sender.awaitNext();
+        assertEquals(1, sent.request.getTimeseriesCount());
+        assertEquals(2, sent.request.getTimeseries(0).getSamplesCount());
+        assertAscending(sent.request.getTimeseries(0));
+    }
+
     // ------------------------------------------------------------------
     // Ordering
     // ------------------------------------------------------------------
@@ -230,6 +285,86 @@ public class ShardedWriteBatcherTest {
         assertEquals(0, registry.meter("batch.retries").getCount());
     }
 
+    /**
+     * A non-retryable rejection of a coalesced request must not take every series in it down: the
+     * batch is resent one series at a time, so only what the backend actually rejects is lost.
+     */
+    @Test
+    public void isolatesAPoisonSeriesInsteadOfDroppingTheWholeBatch() {
+        sender.poisonSeriesNamed("poison_series");
+        batcher = builder().shardCount(1).maxBatchSamples(4).lingerMs(60_000).build();
+
+        Metric poison = gauge("poison_series");
+        Metric healthy = gauge("healthy_series");
+        batcher.enqueue(sample(poison, BASE, 1.0), null);
+        batcher.enqueue(sample(healthy, BASE, 2.0), null);
+        batcher.enqueue(sample(poison, BASE.plusSeconds(1), 3.0), null);
+        batcher.enqueue(sample(healthy, BASE.plusSeconds(1), 4.0), null);
+
+        SentBatch sent = sender.awaitNext();
+        assertEquals(1, sent.request.getTimeseriesCount());
+        assertEquals("healthy_series", labelValue(sent.request.getTimeseries(0), "__name__"));
+        assertEquals(2, sent.request.getTimeseries(0).getSamplesCount());
+        // coalesced batch + poison resend + healthy resend
+        assertEquals(3, sender.sendsStarted());
+        assertEquals(2, registry.meter("samplesWritten").getCount());
+        assertEquals(2, registry.meter("samplesLost").getCount());
+    }
+
+    /**
+     * Nothing the send path throws may kill the shard thread: a dead shard silently strands every
+     * series hashed to it until restart while the other shards look healthy.
+     */
+    @Test
+    public void survivesAnUnexpectedRuntimeFailureInTheSendPath() {
+        sender.failNextSendsWithRuntime(1, new IllegalStateException("simulated transport bug"));
+        batcher = builder().shardCount(1).maxBatchSamples(1).lingerMs(60_000).build();
+
+        Metric metric = gauge("resilient_series");
+        batcher.enqueue(sample(metric, BASE, 1.0), null);
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> registry.meter("samplesLost").getCount() == 1);
+
+        // The shard is still alive and delivers the next batch.
+        batcher.enqueue(sample(metric, BASE.plusSeconds(1), 2.0), null);
+        SentBatch sent = sender.awaitNext();
+        assertEquals(BASE.plusSeconds(1).toEpochMilli(), sent.request.getTimeseries(0).getSamples(0).getTimestamp());
+        assertEquals(1, registry.meter("samplesWritten").getCount());
+    }
+
+    /**
+     * The timed enqueue variant propagates interruption instead of counting the sample lost, so a
+     * caller enqueueing a whole store() batch can stop at the first interrupt rather than burn
+     * every remaining sample against an interrupt flag that fails each offer instantly.
+     */
+    @Test
+    public void propagatesInterruptionFromTheTimedEnqueueWithoutCountingTheSampleLost() throws Exception {
+        sender.blockFirstSend();
+        batcher = builder().shardCount(1).maxBatchSamples(1).lingerMs(10)
+                .shardCapacity(1).enqueueTimeoutMs(50).build();
+
+        Metric metric = gauge("interrupted_series");
+        // First sample: flushed immediately and stuck in the blocked sender.
+        assertTrue(batcher.enqueue(sample(metric, BASE, 1.0), null));
+        sender.awaitSendEntered();
+        // Second sample: sits in the shard queue (capacity 1), so the next offer must wait.
+        assertTrue(batcher.enqueue(sample(metric, BASE.plusSeconds(1), 2.0), null));
+
+        Thread.currentThread().interrupt();
+        try {
+            batcher.enqueue(sample(metric, BASE.plusSeconds(2), 3.0), null, 5_000);
+            fail("expected the timed enqueue to propagate the interruption");
+        } catch (InterruptedException expected) {
+            // the throw consumed the interrupt flag
+        } finally {
+            Thread.interrupted(); // never leak the flag into other tests
+        }
+        assertEquals("the caller still holds the sample, so it must not be counted lost",
+                0, registry.meter("samplesLost").getCount());
+
+        sender.releaseBlockedSend();
+    }
+
     @Test
     public void reportsEnqueueFailureWhenAShardStaysFull() {
         sender.blockFirstSend();
@@ -286,11 +421,23 @@ public class ShardedWriteBatcherTest {
     }
 
     private static Metric gauge(final String name) {
+        return metricWithMtype(name, Metric.Mtype.gauge);
+    }
+
+    private static Metric metricWithMtype(final String name, final Metric.Mtype mtype) {
         return ImmutableMetric.builder()
                 .intrinsicTag("resourceId", "test/" + name)
                 .intrinsicTag("name", name)
-                .metaTag("mtype", Metric.Mtype.gauge.name())
+                .metaTag("mtype", mtype.name())
                 .build();
+    }
+
+    private static String labelValue(final PrometheusTypes.TimeSeries ts, final String name) {
+        return ts.getLabelsList().stream()
+                .filter(l -> l.getName().equals(name))
+                .map(PrometheusTypes.Label::getValue)
+                .findFirst()
+                .orElse(null);
     }
 
     private static Sample sample(final Metric metric, final Instant time, final double value) {
@@ -315,7 +462,10 @@ public class ShardedWriteBatcherTest {
         private final Queue<SentBatch> sent = new ConcurrentLinkedQueue<>();
         private final AtomicInteger started = new AtomicInteger();
         private final AtomicInteger failuresLeft = new AtomicInteger();
+        private final AtomicInteger runtimeFailuresLeft = new AtomicInteger();
         private volatile StorageException failure;
+        private volatile RuntimeException runtimeFailure;
+        private volatile String poisonMetricName;
         private volatile CountDownLatch blockEntered;
         private volatile CountDownLatch blockRelease;
 
@@ -335,6 +485,14 @@ public class ShardedWriteBatcherTest {
                     Thread.currentThread().interrupt();
                     throw new StorageException("interrupted in test sender");
                 }
+            }
+            if (runtimeFailuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                throw runtimeFailure;
+            }
+            final String poison = poisonMetricName;
+            if (poison != null && writeRequest.getTimeseriesList().stream().anyMatch(
+                    ts -> poison.equals(labelValue(ts, "__name__")))) {
+                throw new StorageException("simulated 400 for any request carrying " + poison);
             }
             if (failuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw failure;
@@ -358,6 +516,16 @@ public class ShardedWriteBatcherTest {
         void failNextSends(final int count, final StorageException e) {
             this.failure = e;
             this.failuresLeft.set(count);
+        }
+
+        void failNextSendsWithRuntime(final int count, final RuntimeException e) {
+            this.runtimeFailure = e;
+            this.runtimeFailuresLeft.set(count);
+        }
+
+        /** Every request carrying a series with this {@code __name__} fails like a fatal 4xx. */
+        void poisonSeriesNamed(final String metricName) {
+            this.poisonMetricName = metricName;
         }
 
         int sendsStarted() {

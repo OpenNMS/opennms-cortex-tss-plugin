@@ -66,6 +66,7 @@ property-set batchLingerMs 500
 property-set batchShardCapacity 65536
 property-set batchMaxRetries 3
 property-set batchRetryBackoffMs 1000
+property-set batchEnqueueTimeoutMs 5000
 
 config:update
 ```
@@ -121,7 +122,8 @@ compression, at the cost of up to `batchLingerMs` of added delivery latency.
 
 Batching also gives per-series ordering a structural guarantee (see the next section):
 
-- every series is hashed to exactly one shard, so all writes for a series flow through the same shard;
+- every series - identified by the exact label set it carries on the wire - is hashed to exactly
+  one shard, so all writes for a series flow through the same shard;
 - each shard sends one request at a time, retries included, so its batches reach the backend in order;
 - within a request, each series appears as a single entry with its samples sorted by timestamp.
 
@@ -135,9 +137,10 @@ allows because their series sets are disjoint.
 | `batchShards` | `0` | Number of shards, i.e. the write parallelism. `0` derives it from `maxConcurrentHttpConnections / 8`, clamped to `2 .. 32`. |
 | `batchMaxSamples` | `2000` | A batch is flushed when it holds this many samples. |
 | `batchLingerMs` | `500` | A batch is flushed this long after its first sample, even if not full. |
-| `batchShardCapacity` | `65536` | Buffered samples per shard. A full shard blocks `store()` briefly, then the write fails and the samples count as lost. |
-| `batchMaxRetries` | `3` | Retries per batch for retryable failures (HTTP 429, 5xx, and I/O errors), with exponential backoff starting at `batchRetryBackoffMs` and capped at 60s. Other 4xx responses are never retried. A batch that fails fatally or exhausts its retries is dropped and counted on `samplesLost`; the shard then moves on, so samples behind it survive. |
+| `batchShardCapacity` | `65536` | Buffered samples per shard. A full shard blocks `store()` up to `batchEnqueueTimeoutMs`, then the write fails and the samples count as lost. |
+| `batchMaxRetries` | `3` | Retries per batch for retryable failures (HTTP 429, 5xx, and I/O errors), with exponential backoff starting at `batchRetryBackoffMs` and capped at 60s. Other 4xx responses are never retried; a coalesced request they reject is resent one series at a time, so only the series the backend actually rejects is dropped and counted on `samplesLost`. A batch that exhausts its retries is dropped whole. The shard then moves on, so samples behind a dropped batch survive. |
 | `batchRetryBackoffMs` | `1000` | Initial retry backoff; doubles per attempt. |
+| `batchEnqueueTimeoutMs` | `5000` | Upper bound on how long one `store()` call may block on full shards, shared across all samples of the call. When it expires, the remaining samples are only accepted if their shards have room. |
 
 Sizing notes:
 

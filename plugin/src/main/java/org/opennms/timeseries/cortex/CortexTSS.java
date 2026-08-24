@@ -217,6 +217,7 @@ public class CortexTSS implements TimeSeriesStorage {
                     .shardCapacity(config.getBatchShardCapacity())
                     .maxRetries(config.getBatchMaxRetries())
                     .retryBackoffMs(config.getBatchRetryBackoffMs())
+                    .enqueueTimeoutMs(config.getBatchEnqueueTimeoutMs())
                     .seriesConverter(CortexTSS::toPrometheusTimeSeries)
                     .sender(this.sendBatchSynchronously())
                     .metricRegistry(metrics)
@@ -355,21 +356,39 @@ public class CortexTSS implements TimeSeriesStorage {
     /**
      * The batched write path: hand every sample to the sharded batcher and return. Delivery is
      * asynchronous from the caller's point of view; per-series ordering and retry are the
-     * batcher's responsibility. Failure to even enqueue (a shard stayed full for the whole
-     * enqueue timeout) is reported to the caller like any other write failure.
+     * batcher's responsibility. One enqueue-timeout budget covers the whole call, so a full shard
+     * parks the OpenNMS writer thread for at most batchEnqueueTimeoutMs however many samples the
+     * call carries. Samples that could not be handed over are reported to the caller like any
+     * other write failure.
      */
     private void enqueueBatched(final List<Sample> samples, final String clientID) throws StorageException {
+        final long deadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(config.getBatchEnqueueTimeoutMs());
         int rejected = 0;
-        for (Sample sample : samples) {
+        for (int i = 0; i < samples.size(); i++) {
+            final Sample sample = samples.get(i);
             persistExternalTags(sample);
-            if (!batcher.enqueue(sample, clientID)) {
-                rejected++;
+            final long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+            try {
+                if (!batcher.enqueue(sample, clientID, remainingMs)) {
+                    rejected++;
+                }
+            } catch (InterruptedException e) {
+                // Give up on the rest of the batch: with the interrupt flag set, every further
+                // offer would fail immediately anyway, and pressing on would misreport an
+                // interruption as saturation.
+                Thread.currentThread().interrupt();
+                final int abandoned = samples.size() - i;
+                samplesLost.mark(abandoned);
+                throw storageException(String.format(
+                        "Interrupted while handing samples to the write batcher; %d of %d samples are lost",
+                        abandoned, samples.size()), e);
             }
         }
         if (rejected > 0) {
             throw new StorageException(String.format(
-                    "The write batcher is saturated: %d of %d samples could not be enqueued and are lost.",
-                    rejected, samples.size()));
+                    "The write batcher could not accept %d of %d samples within %dms; they are lost.",
+                    rejected, samples.size(), config.getBatchEnqueueTimeoutMs()));
         }
     }
 

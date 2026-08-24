@@ -53,7 +53,8 @@ import prometheus.PrometheusTypes;
  *
  * <p>Ordering is a structural invariant here, not a scheduling accident:
  * <ul>
- *   <li>every series is hashed to exactly one shard, so all writes for a series flow through the
+ *   <li>every series - identified by the exact label set it will carry on the wire, tenant
+ *       included - is hashed to exactly one shard, so all writes for a series flow through the
  *       same shard forever;</li>
  *   <li>each shard flushes from a single thread and keeps at most one request in flight, retries
  *       included, so a shard's batches reach the backend in the order they were assembled;</li>
@@ -68,9 +69,12 @@ import prometheus.PrometheusTypes;
  *
  * <p>Failure semantics: a batch that fails with a {@link RetryableWriteException} is retried in
  * place with exponential backoff up to {@code maxRetries} times; the shard sends nothing else while
- * that goes on. A batch that fails fatally, or exhausts its retries, is dropped and counted on the
- * shared {@code samplesLost} meter, and the shard moves on. That trades bounded head-of-line
- * blocking for forward progress; samples enqueued behind a dropped batch survive.
+ * that goes on. When a request carrying more than one series fails fatally, its series are resent
+ * one at a time (still sequentially, on the shard thread, so ordering holds), so a single series
+ * the backend rejects does not take unrelated samples down with it. A series that still fails, or
+ * a batch that exhausts its retries, is dropped and counted on the shared {@code samplesLost}
+ * meter, and the shard moves on. That trades bounded head-of-line blocking for forward progress;
+ * samples enqueued behind a dropped batch survive.
  */
 public class ShardedWriteBatcher {
 
@@ -108,9 +112,9 @@ public class ShardedWriteBatcher {
         this.shardCount = requirePositive(builder.shardCount, "shardCount");
         this.maxBatchSamples = requirePositive(builder.maxBatchSamples, "maxBatchSamples");
         this.lingerMs = requirePositive((int) Math.min(Integer.MAX_VALUE, builder.lingerMs), "lingerMs");
-        this.maxRetries = builder.maxRetries;
-        this.retryBackoffMs = builder.retryBackoffMs;
-        this.enqueueTimeoutMs = builder.enqueueTimeoutMs;
+        this.maxRetries = requireNonNegative(builder.maxRetries, "maxRetries");
+        this.retryBackoffMs = requirePositive(builder.retryBackoffMs, "retryBackoffMs");
+        this.enqueueTimeoutMs = requireNonNegative(builder.enqueueTimeoutMs, "enqueueTimeoutMs");
         this.seriesConverter = Objects.requireNonNull(builder.seriesConverter, "seriesConverter");
         this.sender = Objects.requireNonNull(builder.sender, "sender");
 
@@ -150,26 +154,81 @@ public class ShardedWriteBatcher {
         return value;
     }
 
+    private static long requirePositive(final long value, final String name) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(name + " must be positive, got " + value);
+        }
+        return value;
+    }
+
+    private static int requireNonNegative(final int value, final String name) {
+        if (value < 0) {
+            throw new IllegalArgumentException(name + " must not be negative, got " + value);
+        }
+        return value;
+    }
+
+    private static long requireNonNegative(final long value, final String name) {
+        if (value < 0) {
+            throw new IllegalArgumentException(name + " must not be negative, got " + value);
+        }
+        return value;
+    }
+
     /**
      * Queues one sample for delivery. Blocks up to the enqueue timeout when the sample's shard is
      * full (backpressure toward the OpenNMS ring buffer, where drops are already accounted for).
+     * Interruption counts the sample as lost and restores the interrupt flag.
      *
      * @return true when the sample was accepted; false when the shard stayed full for the whole
-     *         timeout or the batcher is shut down, in which case the sample was counted as lost
+     *         timeout, the caller was interrupted, or the batcher is shut down, in which case the
+     *         sample was counted as lost
      */
     public boolean enqueue(final Sample sample, final String organizationId) {
+        try {
+            return enqueue(sample, organizationId, enqueueTimeoutMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            samplesLost.mark();
+            return false;
+        }
+    }
+
+    /**
+     * As {@link #enqueue(Sample, String)}, but with an explicit wait bound, so a caller handing
+     * over a whole {@code store()} batch can spread one deadline across it instead of paying the
+     * full enqueue timeout once per sample. A non-positive timeout still accepts the sample when
+     * the shard has room, it just never waits for it.
+     *
+     * <p>Interruption propagates without counting the sample as lost: the caller still holds the
+     * sample and owns its accounting, and typically wants to stop offering the rest of its batch
+     * rather than burn through it against an interrupt flag that fails every offer instantly.
+     *
+     * @return true when the sample was accepted; false when the shard stayed full for the whole
+     *         timeout, the sample could not be converted, or the batcher is shut down, in which
+     *         case the sample was counted as lost
+     */
+    public boolean enqueue(final Sample sample, final String organizationId, final long timeoutMs)
+            throws InterruptedException {
         if (!running.get()) {
             samplesLost.mark();
             return false;
         }
-        final Entry entry = new Entry(sample, organizationId);
-        final BlockingQueue<Entry> queue = queues.get(shardOf(entry));
+        final PrometheusTypes.TimeSeries.Builder converted;
         try {
-            if (queue.offer(entry, enqueueTimeoutMs, TimeUnit.MILLISECONDS)) {
-                return true;
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            converted = seriesConverter.apply(sample);
+        } catch (RuntimeException e) {
+            // A sample the converter cannot handle must not reach the shard thread, where the
+            // same exception would be fatal to every series behind it.
+            samplesLost.mark();
+            LOG.warn("A sample of metric {} could not be converted to a Prometheus series and is lost.",
+                    sample.getMetric(), e);
+            return false;
+        }
+        final Entry entry = new Entry(sample, organizationId, converted.getLabelsList());
+        final BlockingQueue<Entry> queue = queues.get(shardOf(entry));
+        if (queue.offer(entry, Math.max(0, timeoutMs), TimeUnit.MILLISECONDS)) {
+            return true;
         }
         samplesLost.mark();
         return false;
@@ -177,8 +236,8 @@ public class ShardedWriteBatcher {
 
     /**
      * The shard hash must be stable for the lifetime of the process; per-series ordering only holds
-     * while a series maps to a single shard. Metric keys and String.hashCode are both stable, and
-     * a restart is safe because no batches are in flight across it.
+     * while a series maps to a single shard. Label sets and String.hashCode are both stable, and a
+     * restart is safe because no batches are in flight across it.
      */
     private int shardOf(final Entry entry) {
         return Math.floorMod(entry.seriesKey().hashCode(), shardCount);
@@ -200,11 +259,24 @@ public class ShardedWriteBatcher {
                 Thread.currentThread().interrupt();
                 // Interruption is the destroy() last resort: flush what we hold, then exit.
                 if (!batch.isEmpty()) {
-                    flush(batch);
+                    flushSafely(batch);
                 }
                 return;
             }
+            flushSafely(batch);
+        }
+    }
+
+    /**
+     * Nothing {@link #flush(List)} throws may take the shard thread down: a dead shard silently
+     * strands every series hashed to it until restart, while the other shards look healthy. Drop
+     * the batch instead and keep serving.
+     */
+    private void flushSafely(final List<Entry> batch) {
+        try {
             flush(batch);
+        } catch (RuntimeException e) {
+            drop(batch.size(), "an unexpected error while assembling or sending it", e);
         }
     }
 
@@ -252,8 +324,10 @@ public class ShardedWriteBatcher {
             for (List<Entry> series : org.getValue().values()) {
                 series.sort(Comparator.comparing(e -> e.sample.getTime()));
                 organizationId = series.get(0).organizationId;
-                final PrometheusTypes.TimeSeries.Builder ts = seriesConverter.apply(series.get(0).sample);
-                ts.clearSamples();
+                // Entries grouped here share one series key, and the key is derived from the label
+                // set, so any entry's labels describe the whole group.
+                final PrometheusTypes.TimeSeries.Builder ts = PrometheusTypes.TimeSeries.newBuilder()
+                        .addAllLabels(series.get(0).labels);
                 for (Entry entry : series) {
                     ts.addSamples(PrometheusTypes.Sample.newBuilder()
                             .setTimestamp(entry.sample.getTime().toEpochMilli())
@@ -280,7 +354,10 @@ public class ShardedWriteBatcher {
                     return;
                 }
                 batchRetries.mark();
-                final long backoff = Math.min(MAX_BACKOFF_MS, retryBackoffMs << Math.min(attempt, 10));
+                long backoff = retryBackoffMs << Math.min(attempt, 10);
+                if (backoff <= 0 || backoff > MAX_BACKOFF_MS) {
+                    backoff = MAX_BACKOFF_MS; // the shift overflowed, or the configured base is huge
+                }
                 LOG.debug("Retryable failure writing a batch of {} samples, attempt {}/{}, backing off {}ms",
                         sampleCount, attempt + 1, maxRetries + 1, backoff, e);
                 try {
@@ -291,6 +368,20 @@ public class ShardedWriteBatcher {
                     return;
                 }
             } catch (StorageException e) {
+                if (request.getTimeseriesCount() > 1) {
+                    // A non-retryable rejection names one offender at best, but this request
+                    // coalesces many unrelated series. Resend them one series at a time - still
+                    // sequentially, on this thread, so ordering holds - and lose only the series
+                    // the backend actually rejects.
+                    LOG.warn("The backend rejected a coalesced batch of {} series ({} samples); "
+                                    + "resending each series individually to bound the loss.",
+                            request.getTimeseriesCount(), sampleCount, e);
+                    for (PrometheusTypes.TimeSeries ts : request.getTimeseriesList()) {
+                        sendWithRetry(PrometheusRemote.WriteRequest.newBuilder().addTimeseries(ts).build(),
+                                organizationId, ts.getSamplesCount());
+                    }
+                    return;
+                }
                 drop(sampleCount, "the backend rejected the batch", e);
                 return;
             }
@@ -399,23 +490,40 @@ public class ShardedWriteBatcher {
     private static final class Entry {
         private final Sample sample;
         private final String organizationId;
+        private final List<PrometheusTypes.Label> labels;
+        private final String seriesKey;
 
-        Entry(final Sample sample, final String organizationId) {
+        Entry(final Sample sample, final String organizationId, final List<PrometheusTypes.Label> labels) {
             this.sample = Objects.requireNonNull(sample);
             this.organizationId = organizationId;
+            this.labels = labels;
+            this.seriesKey = buildSeriesKey(orgKey(), labels);
         }
 
         String orgKey() {
             return organizationId == null ? "" : organizationId;
         }
 
-        /**
-         * Identity of the series this sample belongs to. Metric.getKey() is 1:1 with the label set
-         * produced by the converter, and two tenants may legitimately carry the same series, so the
-         * tenant is part of the identity.
-         */
         String seriesKey() {
-            return orgKey() + " " + sample.getMetric().getKey();
+            return seriesKey;
+        }
+
+        /**
+         * Identity of the series this sample belongs to: the exact label set it will carry on the
+         * wire, plus the tenant, since two tenants may legitimately carry the same series. Nothing
+         * upstream of the converter can stand in for this. Metric.getKey() covers only the intrinsic
+         * tags while the converter also emits the meta tags as labels, so two samples whose meta
+         * tags differ are different wire series and must not coalesce; and sanitization is lossy,
+         * so two distinct raw keys can emit one and the same label set and must land on the same
+         * shard for per-series ordering to hold. The label list arrives sorted by name from the
+         * converter, so the key is deterministic.
+         */
+        private static String buildSeriesKey(final String orgKey, final List<PrometheusTypes.Label> labels) {
+            final StringBuilder key = new StringBuilder(orgKey);
+            for (PrometheusTypes.Label label : labels) {
+                key.append('\0').append(label.getName()).append('\1').append(label.getValue());
+            }
+            return key.toString();
         }
     }
 }
