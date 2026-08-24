@@ -384,6 +384,9 @@ public class CortexTSS implements TimeSeriesStorage {
                                 extTagPutTransactionFailed.mark();
                             }
                         });
+                // Refresh the cached entry, or every subsequent sample for this metric re-detects
+                // the same missing tags against the stale entry and repeats the upsert.
+                externalTagsCache.put(key, jsonMetrics.toString());
                 extTagsModified.mark();
             }
             extTagsCacheUsed.mark();
@@ -405,9 +408,13 @@ public class CortexTSS implements TimeSeriesStorage {
                                     extTagPutTransactionFailed.mark();
                                 }
                             });
-                    externalTagsCache.put(key, jsonMetrics.toString());
                     extTagsModified.mark();
                 }
+                // Cache the record whether or not it needed an upsert. This lookup runs on the
+                // write path for every sample; before this line was unconditional, a metric whose
+                // record was already up to date was never cached at all, so every one of its
+                // samples paid a synchronous kvStore.get() (a database round trip) forever.
+                externalTagsCache.put(key, jsonMetrics.toString());
                 //missed caching this record
                 extTagsCacheMissed.mark();
             } else {
