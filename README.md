@@ -59,6 +59,13 @@ property-set bulkheadMaxWaitDuration 9223372036854775807
 property-set maxSeriesLookback 7776000
 property-set organizationId ""
 property-set asyncWrites false
+property-set batchingEnabled false
+property-set batchShards 0
+property-set batchMaxSamples 2000
+property-set batchLingerMs 500
+property-set batchShardCapacity 65536
+property-set batchMaxRetries 3
+property-set batchRetryBackoffMs 1000
 
 config:update
 ```
@@ -100,12 +107,61 @@ Update automatically:
 bundle:watch *
 ```
 
+## Write batching
+
+By default, every `store()` call from OpenNMS becomes one remote-write request. OpenNMS commits one
+attribute group per resource at a time, so those requests are tiny (typically a handful of samples),
+and on large systems the per-request overhead, not bandwidth, becomes the write bottleneck: the
+write rate is capped at `writer_threads / backend latency`, regardless of how small the payloads are.
+
+Setting `batchingEnabled=true` routes writes through a sharded batcher instead. `store()` only
+enqueues samples and returns immediately; a fixed pool of shard writers coalesces them into large
+remote-write requests. This multiplies write throughput by the achieved batch size and improves
+compression, at the cost of up to `batchLingerMs` of added delivery latency.
+
+Batching also gives per-series ordering a structural guarantee (see the next section):
+
+- every series is hashed to exactly one shard, so all writes for a series flow through the same shard;
+- each shard sends one request at a time, retries included, so its batches reach the backend in order;
+- within a request, each series appears as a single entry with its samples sorted by timestamp.
+
+Shards send in parallel, which the
+[remote-write specification](https://prometheus.io/docs/specs/prw/remote_write_spec/) explicitly
+allows because their series sets are disjoint.
+
+| Property | Default | Description |
+|---|---|---|
+| `batchingEnabled` | `false` | Route writes through the batcher. When enabled, `asyncWrites` has no effect: `store()` never waits on HTTP either way. |
+| `batchShards` | `0` | Number of shards, i.e. the write parallelism. `0` derives it from `maxConcurrentHttpConnections / 8`, clamped to `2 .. 32`. |
+| `batchMaxSamples` | `2000` | A batch is flushed when it holds this many samples. |
+| `batchLingerMs` | `500` | A batch is flushed this long after its first sample, even if not full. |
+| `batchShardCapacity` | `65536` | Buffered samples per shard. A full shard blocks `store()` briefly, then the write fails and the samples count as lost. |
+| `batchMaxRetries` | `3` | Retries per batch for retryable failures (HTTP 429, 5xx, and I/O errors), with exponential backoff starting at `batchRetryBackoffMs` and capped at 60s. Other 4xx responses are never retried. A batch that fails fatally or exhausts its retries is dropped and counted on `samplesLost`; the shard then moves on, so samples behind it survive. |
+| `batchRetryBackoffMs` | `1000` | Initial retry backoff; doubles per attempt. |
+
+Sizing notes:
+
+- `callTimeoutInMs` bounds each batch request, and batched requests are much larger than unbatched
+  ones. The default 10s is still generous for 2000-sample requests, but raise it before raising
+  `batchMaxSamples` significantly.
+- With batching enabled, the OpenNMS `writer_threads` setting no longer determines write
+  parallelism; the shards do. Large `writer_threads` values chosen to compensate for tiny unbatched
+  writes can be reduced toward the default.
+- Delivery is asynchronous once samples are enqueued: a failed batch is visible in the `samplesLost`
+  meter and the plugin log, not as an error to the OpenNMS writer thread.
+
+The batcher adds three metrics to the `opennms-cortex:stats` output: `batch.batchesSent`,
+`batch.retries`, and the `batch.bufferedSamples` gauge. `samplesWritten` and `samplesLost` keep
+their meaning: samples acknowledged by the backend, and samples dropped anywhere in the plugin.
+
 ## Sample ordering and out-of-order rejections
 
-The plugin does **not** guarantee that write requests for a series arrive at the backend in timestamp order, and cannot.
+With batching disabled, the plugin does **not** guarantee that write requests for a series arrive at the backend in timestamp order, and cannot.
 OpenNMS dispatches consecutive batches across `writer_threads` Disruptor handlers (16 by default), so batch N and N+1 race from the moment they are handed out: whichever reaches `store()` first writes first, whatever `store()` does internally.
 Synchronous writes (the 2.2.0 default) narrow the window because each writer thread waits for its previous batch to land, but they do not close it.
 A backend that rejects out-of-order samples will therefore occasionally drop batches under normal operation, and those samples are lost.
+
+With `batchingEnabled=true` the ordering guarantee is structural (see the Write batching section above), and the race collapses to the enqueue step: two OpenNMS writer threads can still hand consecutive collections of the same series to `store()` out of order, but that exposure is microseconds of buffer append rather than a full HTTP round trip, and samples that land in the same batch are sorted anyway. Out-of-order arrivals become rare instead of routine, but they are not impossible, so a small tolerance window is still recommended.
 
 We suggest enabling the backend's out-of-order tolerance window.  The configuration settings in the table below can be applied to their respective backends:
 
@@ -117,16 +173,16 @@ We suggest enabling the backend's out-of-order tolerance window.  The configurat
 | VictoriaMetrics | none needed | accepts out-of-order samples within the retention period |
 | Cortex | version-dependent | check your version before relying on it |
 
-A window covering a few collection intervals (e.g. `10m` with the default 5-minute collection interval) is enough; the races span milliseconds to seconds, not minutes.
+A window covering a few collection intervals (e.g. `10m` with the default 5-minute collection interval) is enough with batching disabled; the races span milliseconds to seconds, not minutes. With batching enabled, a window of a few seconds covers the residual enqueue race.
 
 ### Strict ordering mode
 
 If your backend cannot tolerate out-of-order samples at all, ordering can be forced, at the price of single-threaded writes:
 
 - set `writer_threads=1` in OpenNMS (`org.opennms.timeseries.writer_threads`), **and**
-- keep `asyncWrites=false` in this plugin (the default).
+- either enable batching (`batchingEnabled=true`), or keep `asyncWrites=false` in this plugin (the default).
 
-Either alone is insufficient: one writer thread still races against itself with `asyncWrites=true`, and synchronous writes still race across multiple writer threads.
+With a single writer thread the enqueue race disappears, so batching then provides strict per-series ordering while keeping parallelism across different series, which unbatched synchronous writes cannot. Unbatched, either measure alone is insufficient: one writer thread still races against itself with `asyncWrites=true`, and synchronous writes still race across multiple writer threads.
 
 ## Backend tips (Cortex example)
 
