@@ -2,8 +2,9 @@
 
 Need help with the OpenNMS Prometheus RemoteWrite Plugin?
 
-- **Bugs and feature requests** — open a [GitHub issue](https://github.com/OpenNMS-Plugins/opennms-prometheus-remotewrite-plugin/issues)
-  using the bug or enhancement template.
+- **Bugs and feature requests** — file an issue in the
+  [PNNMS Jira project](https://opennms.atlassian.net/browse/PNNMS), where plugin
+  work is tracked.
 - **Questions and usage help** — ask the OpenNMS community:
   - Discourse: https://opennms.discourse.group/
   - Chat (Mattermost): https://chat.opennms.com/

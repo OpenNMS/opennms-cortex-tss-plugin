@@ -39,4 +39,6 @@ Maven modules:
 - Develop against `main`; releases are cut from tags (see [RELEASING.md](RELEASING.md)).
 - Sign off every commit (`git commit -s`) and add an `Assisted-by` trailer for
   AI-assisted work (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+- Work is tracked in the PNNMS Jira project. Prefix commit subjects and PR titles
+  with the issue key: `PNNMS-1234: short description`.
 - New/edited source files need the OpenNMS SPDX license header (AGPL-3.0).

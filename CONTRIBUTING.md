@@ -4,12 +4,20 @@ Thanks for your interest in improving the OpenNMS Prometheus RemoteWrite Plugin.
 
 ## Workflow
 
-1. Start from an issue. Open one (bug or enhancement) before writing code so the
-   change can be discussed and tracked. Drive-by PRs without an issue may be asked
-   to open one first.
-2. Branch from `main`.
-3. Keep changes focused and follow the existing code style.
-4. Open a PR that references its issue with a closing keyword (`Closes #123`).
+Plugin software management is tracked in the
+[PNNMS Jira project](https://opennms.atlassian.net/browse/PNNMS).
+
+1. Start from an issue. Open a PNNMS Jira issue before writing code so the change
+   can be discussed and tracked. Drive-by PRs without an issue may be asked to
+   open one first.
+2. Set the **Fix Version** on the PNNMS issue to the next unreleased patch release.
+3. Branch from `main`.
+4. Keep changes focused and follow the existing code style.
+5. Open a PR whose title is prefixed with the issue key:
+   `PNNMS-1234: short description`.
+6. Link back to the PR from a comment on the PNNMS issue.
+
+If any of this is unclear, say so in the PR and we can help get it set up.
 
 ## Building and testing
 
@@ -47,6 +55,15 @@ for its license compliance — AI output is not exempt from review.
 
 ## Commit messages
 
-Use [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): summary`
-where type is one of `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`,
-`ci`, `chore`. Breaking changes append `!` or add a `BREAKING CHANGE:` footer.
+Prefix the subject with the Jira issue key, as in the PR title:
+
+```
+PNNMS-1234: short description of the change
+```
+
+Keep the subject on one line and put the reasoning in the body. Breaking changes
+should say so explicitly, either with a `!` after the key or a `BREAKING CHANGE:`
+footer.
+
+Automated dependency updates from Dependabot keep their own `build(deps):` subjects
+and are exempt.
