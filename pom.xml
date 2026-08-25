@@ -75,7 +75,7 @@
         <kotlin.version>1.9.10</kotlin.version>
         <log4j.version>2.26.1</log4j.version>
         <mockito.version>5.23.0</mockito.version>
-        <metrics.version>4.2.25</metrics.version>
+        <metrics.version>4.2.39</metrics.version>
         <okio.bundle.version>1.15.0_1</okio.bundle.version>
         <!-- must match the okio pulled in transitively by okhttp ${okhttp.version} -->
         <okio.version>3.6.0</okio.version>
