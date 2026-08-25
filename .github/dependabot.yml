@@ -32,3 +32,19 @@ updates:
       # 2.x-based release. See PR #143.
       - dependency-name: "org.jetbrains.kotlin*"
         versions: [">= 2.0.0"]
+      # okhttp 5.x is built against kotlin 2.x, which the kotlin.version pin
+      # above deliberately holds at 1.9.x, and the Karaf feature still ships
+      # the servicemix okhttp 3.13.1_1 bundle at runtime. Chained behind the
+      # kotlin 2.x entry above. See PR #149.
+      - dependency-name: "com.squareup.okhttp3*"
+        versions: [">= 5.0.0"]
+      # istack-commons-runtime is not a dependency of this plugin: it enters
+      # only via org.apache.karaf.features:framework:kar at provided scope,
+      # and the pin exists to match what that Karaf ships. Karaf 4.3.10
+      # ships 3.0.12 (javax.activation); istack 4.x exports com.sun.istack
+      # against jakarta.activation [2.1,3) and requires JavaSE 11. Bumping it
+      # silently changes the environment karaf-maven-plugin:verify resolves
+      # against, weakening the gate that protects Meridian compatibility.
+      # Chained behind the Karaf 4.4 upgrade above. See PR #150.
+      - dependency-name: "com.sun.istack*"
+        versions: [">= 4.0.0"]
