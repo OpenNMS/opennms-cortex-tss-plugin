@@ -23,7 +23,7 @@
                             <goal>kar</goal>
                         </goals>
                         <configuration>
-                            <featuresFile>mvn:org.opennms.plugins.timeseries/prometheus-remotewrite-karaf-features/${project.version}/xml</featuresFile>
+                            <featuresFile>mvn:org.opennms.plugins.timeseries/prometheus-remotewrite-karaf-features/${project.version}/xml/features</featuresFile>
                             <finalName>opennms-prometheus-remotewrite-plugin</finalName>
                             <ignoreDependencyFlag>true</ignoreDependencyFlag>
                             <archive>
@@ -44,6 +44,7 @@
             <artifactId>prometheus-remotewrite-karaf-features</artifactId>
             <version>${project.version}</version>
             <type>xml</type>
+            <classifier>features</classifier>
             <scope>provided</scope>
         </dependency>
     </dependencies>
