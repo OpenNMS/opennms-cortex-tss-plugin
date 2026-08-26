@@ -65,7 +65,10 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <grpc.version>1.42.3</grpc.version>
-        <guava.version>33.6.0-jre</guava.version>
+        <!-- Align with the guava already running in this OpenNMS (provided by the
+             alarm-notifications plugin). A higher patch forces Karaf to update the
+             shared guava bundle and refresh core, which takes the web app down. -->
+        <guava.version>33.2.0-jre</guava.version>
         <hamcrest.version>3.0</hamcrest.version>
         <java.version>17</java.version>
         <json.version>20240303</json.version>
@@ -80,7 +83,9 @@
         <!-- must match the okio pulled in transitively by okhttp ${okhttp.version} -->
         <okio.version>3.6.0</okio.version>
         <okhttp.version>4.12.0</okhttp.version>
-        <jackson.version>2.16.1</jackson.version>
+        <!-- Match the jackson already running in this OpenNMS (alarm-notifications
+             plugin loads 2.17.1) so the REST JSON bundles resolve to existing ones. -->
+        <jackson.version>2.17.1</jackson.version>
         <okhttp.bundle.version>3.13.1_1</okhttp.bundle.version>
         <opennms.api.version>2.0.0</opennms.api.version>
         <osgi.version>6.0.0</osgi.version>

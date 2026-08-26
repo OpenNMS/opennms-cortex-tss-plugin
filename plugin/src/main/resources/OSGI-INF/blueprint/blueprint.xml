@@ -41,6 +41,9 @@
     <!--Key-value store -->
     <reference id="keyValueStore" interface="org.opennms.integration.api.v1.distributed.KeyValueStore"/>
 
+    <!-- ConfigurationAdmin, used by the REST API to read/write the plugin config PID -->
+    <reference id="configAdmin" interface="org.osgi.service.cm.ConfigurationAdmin"/>
+
     <bean id="timeSeriesStorage" class="org.opennms.timeseries.cortex.CortexTSS" destroy-method="destroy">
         <argument ref="cortexTssConfig" />
         <argument ref="keyValueStore" />
@@ -51,5 +54,27 @@
         <service-properties>
             <entry key="registration.export" value="true" />
         </service-properties>
+    </service>
+
+    <!-- REST API — registered with application-path="/rest" so OpenNMS's JAX-RS
+         dispatcher exposes it at /opennms/rest/prometheus-remotewrite/...
+         The storage bean is passed directly (it is a concrete class, which blueprint
+         cannot proxy as an optional service reference). The REST layer still guards
+         every use of it via isTssActive(), and /health works regardless. -->
+    <bean id="restService" class="org.opennms.timeseries.cortex.rest.PrometheusRemoteWriteRestService">
+        <argument ref="configAdmin" />
+        <argument ref="timeSeriesStorage" />
+    </bean>
+    <service ref="restService"
+             interface="org.opennms.timeseries.cortex.rest.PrometheusRemoteWriteRestService">
+        <service-properties>
+            <entry key="application-path" value="/rest" />
+        </service-properties>
+    </service>
+
+    <!-- UI extension — OpenNMS reads getResourceRootPath()/getModuleFileName()
+         and serves the built Vue module from this bundle's classpath. -->
+    <service interface="org.opennms.integration.api.v1.ui.UIExtension">
+        <bean class="org.opennms.timeseries.cortex.ui.PrometheusRemoteWriteUIExtension"/>
     </service>
 </blueprint>

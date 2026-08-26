@@ -14,6 +14,10 @@
         <bundle>mvn:com.fasterxml.jackson.core/jackson-annotations/${jackson.version}</bundle>
         <bundle>mvn:com.fasterxml.jackson.core/jackson-core/${jackson.version}</bundle>
         <bundle>mvn:com.fasterxml.jackson.core/jackson-databind/${jackson.version}</bundle>
+        <!-- REST API + JSON provider for the plugin UI -->
+        <bundle dependency="true">mvn:javax.ws.rs/javax.ws.rs-api/2.1.1</bundle>
+        <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-base/${jackson.version}</bundle>
+        <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-json-provider/${jackson.version}</bundle>
         <bundle dependency="true">mvn:org.opennms.plugin.timeseries.cortex.wrap/resilience4j/${project.version}</bundle>
         <bundle>mvn:org.opennms.plugins.timeseries/prometheus-remotewrite-plugin/${project.version}</bundle>
         <capability>

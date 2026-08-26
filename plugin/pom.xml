@@ -77,6 +77,30 @@
             <groupId>org.opennms.integration.api</groupId>
             <artifactId>common</artifactId>
         </dependency>
+        <!-- UIExtension lives in the 'api' artifact -->
+        <dependency>
+            <groupId>org.opennms.integration.api</groupId>
+            <artifactId>api</artifactId>
+            <version>${opennms.api.version}</version>
+        </dependency>
+        <!-- REST API + JSON marshalling for the plugin UI -->
+        <dependency>
+            <groupId>javax.ws.rs</groupId>
+            <artifactId>javax.ws.rs-api</artifactId>
+            <version>2.1.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.jaxrs</groupId>
+            <artifactId>jackson-jaxrs-json-provider</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <!-- ConfigurationAdmin (org.osgi.service.cm) — provided by Karaf at runtime -->
+        <dependency>
+            <groupId>org.osgi</groupId>
+            <artifactId>org.osgi.compendium</artifactId>
+            <version>${osgi.compendium.version}</version>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>

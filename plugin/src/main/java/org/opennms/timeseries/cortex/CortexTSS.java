@@ -32,6 +32,7 @@ package org.opennms.timeseries.cortex;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -53,6 +54,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.Map;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.opennms.integration.api.v1.distributed.KeyValueStore;
 import org.opennms.integration.api.v1.timeseries.Aggregation;
@@ -570,6 +572,89 @@ public class CortexTSS implements TimeSeriesStorage {
         List<Metric> metrics = ResultMapper.fromSeriesQueryResult(json, kvStore);
         metrics.forEach(m -> this.metricCache.put(m.getKey(), m));
         return metrics;
+    }
+
+    /**
+     * Lists all tag keys (Prometheus label names) present in the backend within the configured
+     * lookback window. The internal {@code __name__} label is exposed under the plugin's tag-key
+     * convention {@code name} (see {@link IntrinsicTagNames#name}), listed first.
+     */
+    public List<String> getTagKeys() throws StorageException {
+        long start = Instant.now().getEpochSecond() - config.getMaxSeriesLookback();
+        String url = String.format("%s/labels?start=%d", config.getReadUrl(), start);
+        List<String> labels = parseStringData(makeCallToQueryApi(url, null));
+        List<String> keys = new ArrayList<>();
+        keys.add(IntrinsicTagNames.name);
+        for (String label : labels) {
+            // Skip __name__ (exposed as 'name' above) and any literal 'name' label — the 'name'
+            // tag key always means the metric name in this plugin, so a duplicate would be
+            // unqueryable and confusing.
+            if (!METRIC_NAME_LABEL.equals(label) && !IntrinsicTagNames.name.equals(label)) {
+                keys.add(label);
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * Lists the values stored for one tag key within the configured lookback window.
+     * Accepts the tag-key convention used by {@link #findMetrics}: {@code name} means
+     * the metric name ({@code __name__}).
+     */
+    public List<String> getTagValues(String tagKey) throws StorageException {
+        Objects.requireNonNull(tagKey);
+        String label = IntrinsicTagNames.name.equals(tagKey) ? METRIC_NAME_LABEL : sanitizeLabelName(tagKey);
+        long start = Instant.now().getEpochSecond() - config.getMaxSeriesLookback();
+        String url = String.format("%s/label/%s/values?start=%d", config.getReadUrl(), label, start);
+        return parseStringData(makeCallToQueryApi(url, null));
+    }
+
+    /**
+     * Counts the series currently receiving data, grouped by one label, via the instant query
+     * {@code count by (<label>) ({__name__!=""})}. "Currently" follows Prometheus staleness
+     * semantics (~5 min), so an entry here means samples are actively being written for it.
+     * Series that do not carry the label are grouped under the empty string key.
+     */
+    public Map<String, Long> countActiveSeriesBy(String label) throws StorageException {
+        String sanitized = sanitizeLabelName(Objects.requireNonNull(label));
+        String promql = String.format("count by (%s) ({__name__!=\"\"})", sanitized);
+        String url = String.format("%s/query?query=%s", config.getReadUrl(), urlEncode(promql));
+        String json = makeCallToQueryApi(url, null);
+        try {
+            JSONArray result = new JSONObject(json).getJSONObject("data").getJSONArray("result");
+            Map<String, Long> out = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < result.length(); i++) {
+                JSONObject entry = result.getJSONObject(i);
+                String key = entry.getJSONObject("metric").optString(sanitized, "");
+                long count = Long.parseLong(entry.getJSONArray("value").getString(1));
+                out.merge(key, count, Long::sum);
+            }
+            return out;
+        } catch (RuntimeException e) {
+            throw new StorageException("Unexpected response from the query API: " + e.getMessage(), e);
+        }
+    }
+
+    private static String urlEncode(String s) {
+        try {
+            return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8.name());
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new IllegalStateException(e); // UTF-8 is always present
+        }
+    }
+
+    /** Parses a Prometheus API response whose {@code data} is a plain string array. */
+    private static List<String> parseStringData(String json) throws StorageException {
+        try {
+            JSONArray data = new JSONObject(json).getJSONArray("data");
+            List<String> out = new ArrayList<>(data.length());
+            for (int i = 0; i < data.length(); i++) {
+                out.add(data.getString(i));
+            }
+            return out;
+        } catch (RuntimeException e) {
+            throw new StorageException("Unexpected response from the query API: " + e.getMessage(), e);
+        }
     }
 
     /** Returns the full metric (incl. meta data from the database).
