@@ -66,6 +66,9 @@ import org.opennms.integration.api.v1.timeseries.TagMatcher;
 import org.opennms.integration.api.v1.timeseries.TimeSeriesFetchRequest;
 import org.opennms.integration.api.v1.timeseries.TimeSeriesStorage;
 import org.opennms.integration.api.v1.timeseries.immutables.ImmutableTagMatcher.TagMatcherBuilder;
+import org.opennms.timeseries.cortex.batch.RemoteWriteSender;
+import org.opennms.timeseries.cortex.batch.RetryableWriteException;
+import org.opennms.timeseries.cortex.batch.ShardedWriteBatcher;
 import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.Bulkhead;
 import org.opennms.timeseries.cortex.shaded.resilience4j.bulkhead.BulkheadConfig;
 import org.slf4j.Logger;
@@ -147,6 +150,9 @@ public class CortexTSS implements TimeSeriesStorage {
     private final Bulkhead asyncHttpCallsBulkhead;
     private final CortexTSSConfig config;
 
+    /** Coalesces store() calls into large ordered remote-write requests. Null when batching is disabled. */
+    private final ShardedWriteBatcher batcher;
+
     public static final String CORTEX_TSS = "CORTEX_TSS";
     private final KeyValueStore kvStore;
     private final Cache<String, String> externalTagsCache;
@@ -203,6 +209,70 @@ public class CortexTSS implements TimeSeriesStorage {
 
         this.kvStore.enumerateContextAsync(CORTEX_TSS).thenAccept(map -> externalTagsCache.putAll((Map<String, String>) map));
 
+        if (config.isBatchingEnabled()) {
+            this.batcher = ShardedWriteBatcher.builder()
+                    .shardCount(resolveBatchShards(config))
+                    .maxBatchSamples(config.getBatchMaxSamples())
+                    .lingerMs(config.getBatchLingerMs())
+                    .shardCapacity(config.getBatchShardCapacity())
+                    .maxRetries(config.getBatchMaxRetries())
+                    .retryBackoffMs(config.getBatchRetryBackoffMs())
+                    .enqueueTimeoutMs(config.getBatchEnqueueTimeoutMs())
+                    .seriesConverter(CortexTSS::toPrometheusTimeSeries)
+                    .sender(this.sendBatchSynchronously())
+                    .metricRegistry(metrics)
+                    .build();
+        } else {
+            this.batcher = null;
+        }
+    }
+
+    /**
+     * batchShards=0 derives the write parallelism from the HTTP connection budget. The batcher
+     * needs far fewer connections than the unbatched path, so a small slice of it is plenty.
+     */
+    static int resolveBatchShards(final CortexTSSConfig config) {
+        if (config.getBatchShards() > 0) {
+            return config.getBatchShards();
+        }
+        return Math.max(2, Math.min(32, config.getMaxConcurrentHttpConnections() / 8));
+    }
+
+    /**
+     * The batcher's transport: one synchronous POST per assembled batch, executed on the shard
+     * thread. Synchronous is load-bearing: the shard must not hand out a second request while one
+     * is in flight, or per-series ordering is lost.
+     */
+    private RemoteWriteSender sendBatchSynchronously() {
+        return (writeRequest, organizationId) -> {
+            final Request request = buildWriteHttpRequest(writeRequest, organizationId);
+            try (Response response = client.newCall(request).execute()) {
+                if (response.isSuccessful()) {
+                    return;
+                }
+                final String message = String.format("Writing to Prometheus failed: %s - %s: %s",
+                        response.code(), response.message(), readBodyQuietly(response));
+                if (response.code() == 429 || response.code() >= 500) {
+                    throw new RetryableWriteException(message);
+                }
+                throw new StorageException(message);
+            } catch (IOException e) {
+                // Includes timeouts and connection failures; the payload itself may be fine.
+                throw new RetryableWriteException("I/O failure writing to Prometheus: " + e, e);
+            }
+        };
+    }
+
+    private static String readBodyQuietly(final Response response) {
+        final ResponseBody body = response.body();
+        if (body == null) {
+            return "(null)";
+        }
+        try {
+            return body.string();
+        } catch (IOException e) {
+            return "(error reading body)";
+        }
     }
 
     @Override
@@ -224,6 +294,11 @@ public class CortexTSS implements TimeSeriesStorage {
             return;
         }
 
+        if (batcher != null) {
+            enqueueBatched(samplesSorted, clientID);
+            return;
+        }
+
         PrometheusRemote.WriteRequest.Builder writeBuilder = PrometheusRemote.WriteRequest.newBuilder();
         samplesSorted.forEach(s -> {
 
@@ -234,27 +309,7 @@ public class CortexTSS implements TimeSeriesStorage {
 
         PrometheusRemote.WriteRequest writeRequest = writeBuilder.build();
 
-        // Compress the write request using Snappy
-        final byte[] writeRequestCompressed;
-        try {
-            writeRequestCompressed = Snappy.compress(writeRequest.toByteArray());
-        } catch (IOException e) {
-            throw new StorageException(e);
-        }
-
-        // Build the HTTP request
-        final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, writeRequestCompressed);
-        final Request.Builder builder = new Request.Builder()
-                .url(config.getWriteUrl())
-                .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
-                .addHeader("Content-Encoding", "snappy")
-                .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
-                .post(body);
-        // Add the OrgId header if set
-        if (clientID != null && clientID.trim().length() > 0) {
-            builder.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
-        }
-        final Request request = builder.build();
+        final Request request = buildWriteHttpRequest(writeRequest, clientID);
 
         LOG.trace("Writing: {}", writeRequest);
 
@@ -296,6 +351,69 @@ public class CortexTSS implements TimeSeriesStorage {
             final Throwable cause = e.getCause() != null ? e.getCause() : e;
             throw storageException("Failed to write samples to Prometheus", cause);
         }
+    }
+
+    /**
+     * The batched write path: hand every sample to the sharded batcher and return. Delivery is
+     * asynchronous from the caller's point of view; per-series ordering and retry are the
+     * batcher's responsibility. One enqueue-timeout budget covers the whole call, so a full shard
+     * parks the OpenNMS writer thread for at most batchEnqueueTimeoutMs however many samples the
+     * call carries. Samples that could not be handed over are reported to the caller like any
+     * other write failure.
+     */
+    private void enqueueBatched(final List<Sample> samples, final String clientID) throws StorageException {
+        final long deadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(config.getBatchEnqueueTimeoutMs());
+        int rejected = 0;
+        for (int i = 0; i < samples.size(); i++) {
+            final Sample sample = samples.get(i);
+            persistExternalTags(sample);
+            final long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+            try {
+                if (!batcher.enqueue(sample, clientID, remainingMs)) {
+                    rejected++;
+                }
+            } catch (InterruptedException e) {
+                // Give up on the rest of the batch: with the interrupt flag set, every further
+                // offer would fail immediately anyway, and pressing on would misreport an
+                // interruption as saturation.
+                Thread.currentThread().interrupt();
+                final int abandoned = samples.size() - i;
+                samplesLost.mark(abandoned);
+                throw storageException(String.format(
+                        "Interrupted while handing samples to the write batcher; %d of %d samples are lost",
+                        abandoned, samples.size()), e);
+            }
+        }
+        if (rejected > 0) {
+            throw new StorageException(String.format(
+                    "The write batcher could not accept %d of %d samples within %dms; they are lost.",
+                    rejected, samples.size(), config.getBatchEnqueueTimeoutMs()));
+        }
+    }
+
+    /** Serializes, compresses and wraps one WriteRequest as a ready-to-send HTTP request. */
+    private Request buildWriteHttpRequest(final PrometheusRemote.WriteRequest writeRequest, final String clientID)
+            throws StorageException {
+        final byte[] writeRequestCompressed;
+        try {
+            writeRequestCompressed = Snappy.compress(writeRequest.toByteArray());
+        } catch (IOException e) {
+            throw new StorageException(e);
+        }
+
+        final RequestBody body = RequestBody.create(PROTOBUF_MEDIA_TYPE, writeRequestCompressed);
+        final Request.Builder builder = new Request.Builder()
+                .url(config.getWriteUrl())
+                .addHeader("X-Prometheus-Remote-Write-Version", "0.1.0")
+                .addHeader("Content-Encoding", "snappy")
+                .addHeader("User-Agent", CortexTSS.class.getCanonicalName())
+                .post(body);
+        // Add the OrgId header if set
+        if (clientID != null && clientID.trim().length() > 0) {
+            builder.addHeader(X_SCOPE_ORG_ID_HEADER, clientID);
+        }
+        return builder.build();
     }
 
     /**
@@ -476,7 +594,7 @@ public class CortexTSS implements TimeSeriesStorage {
         return future;
     }
 
-    private static PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
+    public static PrometheusTypes.TimeSeries.Builder toPrometheusTimeSeries(Sample sample) {
     // ------------------------------------------------------------------
     // 1) Translate tags to Prometheus labels (with sanitization)
     // 2) Sort by label name (lexicographically)
@@ -779,6 +897,11 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public void destroy() throws InterruptedException {
+       if (batcher != null) {
+           // Drain buffered samples while the HTTP client still works.
+           batcher.destroy();
+       }
+
        ExecutorService executorService =  client.dispatcher().executorService();
 
        executorService.shutdown();

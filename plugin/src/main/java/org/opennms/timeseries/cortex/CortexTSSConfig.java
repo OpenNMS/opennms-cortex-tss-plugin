@@ -17,6 +17,14 @@ public class CortexTSSConfig {
     private final boolean hasOrganizationId;
     private final long callTimeoutInMs;
     private final boolean asyncWrites;
+    private final boolean batchingEnabled;
+    private final int batchShards;
+    private final int batchMaxSamples;
+    private final long batchLingerMs;
+    private final int batchShardCapacity;
+    private final int batchMaxRetries;
+    private final long batchRetryBackoffMs;
+    private final long batchEnqueueTimeoutMs;
 
     public CortexTSSConfig() {
         this(builder());
@@ -36,6 +44,14 @@ public class CortexTSSConfig {
         this.hasOrganizationId = organizationId != null && organizationId.trim().length() > 0;
         this.callTimeoutInMs = builder.callTimeoutInMs;
         this.asyncWrites = builder.asyncWrites;
+        this.batchingEnabled = builder.batchingEnabled;
+        this.batchShards = builder.batchShards;
+        this.batchMaxSamples = builder.batchMaxSamples;
+        this.batchLingerMs = builder.batchLingerMs;
+        this.batchShardCapacity = builder.batchShardCapacity;
+        this.batchMaxRetries = builder.batchMaxRetries;
+        this.batchRetryBackoffMs = builder.batchRetryBackoffMs;
+        this.batchEnqueueTimeoutMs = builder.batchEnqueueTimeoutMs;
     }
 
     /** Will be called via blueprint. The builder can be called when not running as Osgi plugin. */
@@ -51,7 +67,15 @@ public class CortexTSSConfig {
             final long maxSeriesLookback,
             final String organizationId,
             final long callTimeoutInMs,
-            final boolean asyncWrites) {
+            final boolean asyncWrites,
+            final boolean batchingEnabled,
+            final int batchShards,
+            final int batchMaxSamples,
+            final long batchLingerMs,
+            final int batchShardCapacity,
+            final int batchMaxRetries,
+            final long batchRetryBackoffMs,
+            final long batchEnqueueTimeoutMs) {
         this(builder()
                 .writeUrl(writeUrl)
                 .readUrl(readUrl)
@@ -64,7 +88,15 @@ public class CortexTSSConfig {
                 .maxSeriesLookback(maxSeriesLookback)
                 .organizationId(organizationId)
                 .callTimeoutInMs(callTimeoutInMs)
-                .asyncWrites(asyncWrites));
+                .asyncWrites(asyncWrites)
+                .batchingEnabled(batchingEnabled)
+                .batchShards(batchShards)
+                .batchMaxSamples(batchMaxSamples)
+                .batchLingerMs(batchLingerMs)
+                .batchShardCapacity(batchShardCapacity)
+                .batchMaxRetries(batchMaxRetries)
+                .batchRetryBackoffMs(batchRetryBackoffMs)
+                .batchEnqueueTimeoutMs(batchEnqueueTimeoutMs));
     }
 
     public String getWriteUrl() {
@@ -127,6 +159,50 @@ public class CortexTSSConfig {
         return asyncWrites;
     }
 
+    /**
+     * When true, {@code store()} enqueues samples into a sharded batcher that coalesces them into
+     * large remote-write requests with per-series ordering guaranteed structurally. When false,
+     * every {@code store()} call becomes one immediate request, as before.
+     */
+    public boolean isBatchingEnabled() {
+        return batchingEnabled;
+    }
+
+    /** Number of batcher shards, i.e. the write parallelism. 0 derives a default from maxConcurrentHttpConnections. */
+    public int getBatchShards() {
+        return batchShards;
+    }
+
+    public int getBatchMaxSamples() {
+        return batchMaxSamples;
+    }
+
+    /** How long a batch may wait for more samples after its first one before it is flushed. */
+    public long getBatchLingerMs() {
+        return batchLingerMs;
+    }
+
+    /** Buffered-sample capacity per shard; a full shard pushes back on the OpenNMS writer threads. */
+    public int getBatchShardCapacity() {
+        return batchShardCapacity;
+    }
+
+    public int getBatchMaxRetries() {
+        return batchMaxRetries;
+    }
+
+    public long getBatchRetryBackoffMs() {
+        return batchRetryBackoffMs;
+    }
+
+    /**
+     * Upper bound on how long one {@code store()} call may block on full shards before the write
+     * fails, shared across all samples of the call rather than paid per sample.
+     */
+    public long getBatchEnqueueTimeoutMs() {
+        return batchEnqueueTimeoutMs;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -144,6 +220,14 @@ public class CortexTSSConfig {
         private String organizationId = null;
         private long callTimeoutInMs = 10000;
         private boolean asyncWrites = false;
+        private boolean batchingEnabled = false;
+        private int batchShards = 0;
+        private int batchMaxSamples = 2000;
+        private long batchLingerMs = 500;
+        private int batchShardCapacity = 65536;
+        private int batchMaxRetries = 3;
+        private long batchRetryBackoffMs = 1000;
+        private long batchEnqueueTimeoutMs = 5000;
 
         public Builder writeUrl(final String writeUrl) {
             this.writeUrl = writeUrl;
@@ -204,6 +288,46 @@ public class CortexTSSConfig {
             return this;
         }
 
+        public Builder batchingEnabled(final boolean batchingEnabled) {
+            this.batchingEnabled = batchingEnabled;
+            return this;
+        }
+
+        public Builder batchShards(final int batchShards) {
+            this.batchShards = batchShards;
+            return this;
+        }
+
+        public Builder batchMaxSamples(final int batchMaxSamples) {
+            this.batchMaxSamples = batchMaxSamples;
+            return this;
+        }
+
+        public Builder batchLingerMs(final long batchLingerMs) {
+            this.batchLingerMs = batchLingerMs;
+            return this;
+        }
+
+        public Builder batchShardCapacity(final int batchShardCapacity) {
+            this.batchShardCapacity = batchShardCapacity;
+            return this;
+        }
+
+        public Builder batchMaxRetries(final int batchMaxRetries) {
+            this.batchMaxRetries = batchMaxRetries;
+            return this;
+        }
+
+        public Builder batchRetryBackoffMs(final long batchRetryBackoffMs) {
+            this.batchRetryBackoffMs = batchRetryBackoffMs;
+            return this;
+        }
+
+        public Builder batchEnqueueTimeoutMs(final long batchEnqueueTimeoutMs) {
+            this.batchEnqueueTimeoutMs = batchEnqueueTimeoutMs;
+            return this;
+        }
+
         public CortexTSSConfig build() {
             return new CortexTSSConfig(this);
         }
@@ -224,6 +348,14 @@ public class CortexTSSConfig {
                 .add("organizationId=" + organizationId)
                 .add("callTimeoutInMs=" + callTimeoutInMs)
                 .add("asyncWrites=" + asyncWrites)
+                .add("batchingEnabled=" + batchingEnabled)
+                .add("batchShards=" + batchShards)
+                .add("batchMaxSamples=" + batchMaxSamples)
+                .add("batchLingerMs=" + batchLingerMs)
+                .add("batchShardCapacity=" + batchShardCapacity)
+                .add("batchMaxRetries=" + batchMaxRetries)
+                .add("batchRetryBackoffMs=" + batchRetryBackoffMs)
+                .add("batchEnqueueTimeoutMs=" + batchEnqueueTimeoutMs)
                 .toString();
     }
 }
