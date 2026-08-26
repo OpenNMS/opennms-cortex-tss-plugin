@@ -305,10 +305,69 @@ public class ShardedWriteBatcherTest {
         assertEquals(1, sent.request.getTimeseriesCount());
         assertEquals("healthy_series", labelValue(sent.request.getTimeseries(0), "__name__"));
         assertEquals(2, sent.request.getTimeseries(0).getSamplesCount());
-        // coalesced batch + poison resend + healthy resend
+        // coalesced batch + the poison half + the healthy half
         assertEquals(3, sender.sendsStarted());
         assertEquals(2, registry.meter("samplesWritten").getCount());
         assertEquals(2, registry.meter("samplesLost").getCount());
+    }
+
+    /**
+     * Isolation must be bounded in requests, not just in loss: a fatal rejection bisects the
+     * request, so one poison series among n is cornered in O(log n) resends, not one POST per
+     * series. With 8 series and the poison first, that is: the batch, then fail(P c1 c2 c3),
+     * ok(c4..c7), fail(P c1), ok(c2 c3), fail(P) dropped, ok(c1): 7 sends, not 9.
+     */
+    @Test
+    public void bisectionCornersAPoisonSeriesInLogarithmicRequests() {
+        sender.poisonSeriesNamed("poison_series");
+        batcher = builder().shardCount(1).maxBatchSamples(8).lingerMs(60_000).build();
+
+        batcher.enqueue(sample(gauge("poison_series"), BASE, 0.0), null);
+        for (int i = 1; i < 8; i++) {
+            batcher.enqueue(sample(gauge("clean_series_" + i), BASE, i), null);
+        }
+
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> registry.meter("samplesWritten").getCount() == 7);
+        assertEquals(1, registry.meter("samplesLost").getCount());
+        assertEquals(7, sender.sendsStarted());
+        int delivered = 0;
+        for (SentBatch sent : sender.all()) {
+            for (PrometheusTypes.TimeSeries ts : sent.request.getTimeseriesList()) {
+                assertTrue("the poison series must not be delivered",
+                        labelValue(ts, "__name__").startsWith("clean_series_"));
+                delivered++;
+            }
+        }
+        assertEquals(7, delivered);
+    }
+
+    /**
+     * One retry budget covers a batch and every resend its isolation spawns. Otherwise a backend
+     * mixing fatal and retryable failures hands each of up to batchMaxSamples sub-requests a fresh
+     * budget, and one batch can hold its shard for hours of sequential backoffs.
+     */
+    @Test
+    public void sharesOneRetryBudgetAcrossIsolationResends() {
+        sender.poisonSeriesNamed("poison_series");
+        // Every send that is not poisoned fails retryably: h1 consumes the whole budget (1).
+        sender.failNextSends(Integer.MAX_VALUE, new RetryableWriteException("simulated flapping 503"));
+        batcher = builder().shardCount(1).maxBatchSamples(3).lingerMs(60_000)
+                .maxRetries(1).retryBackoffMs(10).build();
+
+        batcher.enqueue(sample(gauge("healthy_1"), BASE, 1.0), null);
+        batcher.enqueue(sample(gauge("healthy_2"), BASE, 2.0), null);
+        batcher.enqueue(sample(gauge("poison_series"), BASE, 3.0), null);
+
+        // batch(P: fatal) -> bisect: (h1: retryable, retry, retryable, budget spent, dropped),
+        // then (h2 P: fatal) -> bisect: (h2: retryable, budget already spent, dropped immediately),
+        // (P: fatal, dropped). Per-resend budgets would have retried h2 a second time.
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> registry.meter("samplesLost").getCount() == 3);
+        assertEquals("only h1's single retry may consume the budget",
+                1, registry.meter("batch.retries").getCount());
+        assertEquals(6, sender.sendsStarted());
+        assertEquals(0, registry.meter("samplesWritten").getCount());
     }
 
     /**

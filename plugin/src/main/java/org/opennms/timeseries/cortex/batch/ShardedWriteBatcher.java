@@ -69,12 +69,16 @@ import prometheus.PrometheusTypes;
  *
  * <p>Failure semantics: a batch that fails with a {@link RetryableWriteException} is retried in
  * place with exponential backoff up to {@code maxRetries} times; the shard sends nothing else while
- * that goes on. When a request carrying more than one series fails fatally, its series are resent
- * one at a time (still sequentially, on the shard thread, so ordering holds), so a single series
- * the backend rejects does not take unrelated samples down with it. A series that still fails, or
- * a batch that exhausts its retries, is dropped and counted on the shared {@code samplesLost}
- * meter, and the shard moves on. That trades bounded head-of-line blocking for forward progress;
- * samples enqueued behind a dropped batch survive.
+ * that goes on. When a request carrying more than one series fails fatally, it is bisected and each
+ * half resent (still sequentially, on the shard thread, so ordering holds), cornering a rejected
+ * series in O(log n) extra requests rather than one request per series, so a single series the
+ * backend rejects does not take unrelated samples down with it. One retry budget of
+ * {@code maxRetries} is shared between a batch and every resend its isolation spawns, so a batch
+ * occupies its shard for a bounded number of requests and backoffs even when the backend mixes
+ * fatal and retryable failures. A series that still fails, or a request whose budget is exhausted,
+ * is dropped and counted on the shared {@code samplesLost} meter, and the shard moves on. That
+ * trades bounded head-of-line blocking for forward progress; samples enqueued behind a dropped
+ * batch survive.
  */
 public class ShardedWriteBatcher {
 
@@ -336,12 +340,12 @@ public class ShardedWriteBatcher {
                 }
                 request.addTimeseries(ts);
             }
-            sendWithRetry(request.build(), organizationId, sampleCount);
+            sendWithRetry(request.build(), organizationId, sampleCount, new RetryBudget(maxRetries));
         }
     }
 
     private void sendWithRetry(final PrometheusRemote.WriteRequest request, final String organizationId,
-                               final int sampleCount) {
+                               final int sampleCount, final RetryBudget budget) {
         for (int attempt = 0; ; attempt++) {
             try {
                 sender.send(request, organizationId);
@@ -349,8 +353,11 @@ public class ShardedWriteBatcher {
                 samplesWritten.mark(sampleCount);
                 return;
             } catch (RetryableWriteException e) {
-                if (attempt >= maxRetries) {
-                    drop(sampleCount, "retries exhausted after " + (attempt + 1) + " attempts", e);
+                // The budget is shared with every resend spawned by isolating this request's
+                // original batch, so a batch cannot occupy its shard for more than maxRetries
+                // backoffs in total, however far it is split.
+                if (!budget.tryConsume()) {
+                    drop(sampleCount, "the batch's shared budget of " + maxRetries + " retries is exhausted", e);
                     return;
                 }
                 batchRetries.mark();
@@ -358,8 +365,8 @@ public class ShardedWriteBatcher {
                 if (backoff <= 0 || backoff > MAX_BACKOFF_MS) {
                     backoff = MAX_BACKOFF_MS; // the shift overflowed, or the configured base is huge
                 }
-                LOG.debug("Retryable failure writing a batch of {} samples, attempt {}/{}, backing off {}ms",
-                        sampleCount, attempt + 1, maxRetries + 1, backoff, e);
+                LOG.debug("Retryable failure writing a batch of {} samples, attempt {} of this request, "
+                                + "backing off {}ms", sampleCount, attempt + 1, backoff, e);
                 try {
                     Thread.sleep(backoff);
                 } catch (InterruptedException ie) {
@@ -368,23 +375,63 @@ public class ShardedWriteBatcher {
                     return;
                 }
             } catch (StorageException e) {
-                if (request.getTimeseriesCount() > 1) {
+                final int seriesCount = request.getTimeseriesCount();
+                if (seriesCount > 1) {
                     // A non-retryable rejection names one offender at best, but this request
-                    // coalesces many unrelated series. Resend them one series at a time - still
-                    // sequentially, on this thread, so ordering holds - and lose only the series
-                    // the backend actually rejects.
+                    // coalesces many unrelated series. Bisect and resend each half - still
+                    // sequentially, on this thread, so ordering holds. A healthy half is
+                    // confirmed with one request, so a rejected series is cornered in O(log n)
+                    // extra requests instead of one request per series of the batch.
                     LOG.warn("The backend rejected a coalesced batch of {} series ({} samples); "
-                                    + "resending each series individually to bound the loss.",
-                            request.getTimeseriesCount(), sampleCount, e);
-                    for (PrometheusTypes.TimeSeries ts : request.getTimeseriesList()) {
-                        sendWithRetry(PrometheusRemote.WriteRequest.newBuilder().addTimeseries(ts).build(),
-                                organizationId, ts.getSamplesCount());
-                    }
+                                    + "bisecting to isolate the rejected series.",
+                            seriesCount, sampleCount, e);
+                    final int mid = seriesCount / 2;
+                    final PrometheusRemote.WriteRequest head = sliceSeries(request, 0, mid);
+                    final PrometheusRemote.WriteRequest tail = sliceSeries(request, mid, seriesCount);
+                    sendWithRetry(head, organizationId, sampleCountOf(head), budget);
+                    sendWithRetry(tail, organizationId, sampleCountOf(tail), budget);
                     return;
                 }
                 drop(sampleCount, "the backend rejected the batch", e);
                 return;
             }
+        }
+    }
+
+    private static PrometheusRemote.WriteRequest sliceSeries(final PrometheusRemote.WriteRequest request,
+                                                             final int from, final int to) {
+        final PrometheusRemote.WriteRequest.Builder slice = PrometheusRemote.WriteRequest.newBuilder();
+        for (int i = from; i < to; i++) {
+            slice.addTimeseries(request.getTimeseries(i));
+        }
+        return slice.build();
+    }
+
+    private static int sampleCountOf(final PrometheusRemote.WriteRequest request) {
+        int count = 0;
+        for (PrometheusTypes.TimeSeries ts : request.getTimeseriesList()) {
+            count += ts.getSamplesCount();
+        }
+        return count;
+    }
+
+    /**
+     * Retries left for one original batch and everything its fatal-rejection isolation resends.
+     * Only touched from the owning shard thread, so a plain int suffices.
+     */
+    private static final class RetryBudget {
+        private int remaining;
+
+        RetryBudget(final int remaining) {
+            this.remaining = remaining;
+        }
+
+        boolean tryConsume() {
+            if (remaining <= 0) {
+                return false;
+            }
+            remaining--;
+            return true;
         }
     }
 
