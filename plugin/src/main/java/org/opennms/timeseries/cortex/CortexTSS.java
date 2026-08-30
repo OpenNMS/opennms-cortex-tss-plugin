@@ -250,6 +250,14 @@ public class CortexTSS implements TimeSeriesStorage {
      * 400, the remote-write spec's status for rejected samples (out-of-order, duplicates, invalid
      * labels), and 413, which a smaller bisected request can fit under. 429 never reaches this
      * check - it is retried.
+     *
+     * <p>403 is a judgment call: a backend enforcing per-series ACLs could in principle 403 one
+     * series rather than the request, and bisection would then rescue the permitted ones. No
+     * mainstream remote-write backend does that - Cortex/Mimir/Thanos reject at the tenant or
+     * request level and use 400/429 for per-series and limit problems - while 403 from a
+     * misconfigured credential or tenant is exactly the standing failure whose bisection storms
+     * stall a shard. If such a backend ever materializes, revisit with response-body
+     * classification rather than a blanket recategorization.
      */
     private static boolean isNonIsolableStatus(final int status) {
         return status >= 400 && status < 500 && status != 400 && status != 413 && status != 429;
