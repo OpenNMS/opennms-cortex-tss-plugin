@@ -204,6 +204,46 @@ public class ShardedWriteBatcherTest {
         assertAscending(sent.request.getTimeseries(0));
     }
 
+    /**
+     * The inverse guarantee: label values may contain any bytes - sanitization only truncates them
+     * - so no flattened key encoding is collision-free. These two label sets flatten identically
+     * under the {@code \0}/{@code \1} delimiter scheme the series key once used ({@code {v="x",
+     * w="y"}} vs {@code {v="x\0w\1y"}}), but they are different wire series: coalescing them would
+     * store one series' samples under the other's labels for as long as the series cache kept the
+     * colliding entry alive.
+     */
+    @Test
+    public void keepsSeriesDistinctWhenALabelValueEmbedsAnotherSeriesKey() {
+        batcher = builder().shardCount(1).maxBatchSamples(2).lingerMs(60_000).build();
+
+        Metric twoTags = ImmutableMetric.builder()
+                .intrinsicTag("resourceId", "test/delimiters")
+                .intrinsicTag("name", "delimiter_collision")
+                .metaTag("mtype", Metric.Mtype.gauge.name())
+                .metaTag("v", "x")
+                .metaTag("w", "y")
+                .build();
+        Metric oneTag = ImmutableMetric.builder()
+                .intrinsicTag("resourceId", "test/delimiters")
+                .intrinsicTag("name", "delimiter_collision")
+                .metaTag("mtype", Metric.Mtype.gauge.name())
+                .metaTag("v", "x\0w\1y")
+                .build();
+
+        batcher.enqueue(sample(twoTags, BASE, 1.0), null);
+        batcher.enqueue(sample(oneTag, BASE.plusSeconds(1), 2.0), null);
+
+        SentBatch sent = sender.awaitNext();
+        assertEquals("label sets that flatten identically are still two series",
+                2, sent.request.getTimeseriesCount());
+        for (PrometheusTypes.TimeSeries ts : sent.request.getTimeseriesList()) {
+            assertEquals(1, ts.getSamplesCount());
+            double expected = "y".equals(labelValue(ts, "w")) ? 1.0 : 2.0;
+            assertEquals("each sample must sit under its own label set",
+                    expected, ts.getSamples(0).getValue(), 0.0);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Ordering
     // ------------------------------------------------------------------

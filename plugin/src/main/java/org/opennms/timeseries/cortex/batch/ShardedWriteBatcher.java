@@ -122,7 +122,7 @@ public class ShardedWriteBatcher {
      * entry alive, so this tracks currently-active series rather than growing with every series
      * ever seen over the process lifetime.
      */
-    private final Cache<String, Series> seriesCache = CacheBuilder.newBuilder().weakValues().build();
+    private final Cache<SeriesKey, Series> seriesCache = CacheBuilder.newBuilder().weakValues().build();
 
     private final Meter samplesWritten;
     private final Meter samplesLost;
@@ -263,9 +263,9 @@ public class ShardedWriteBatcher {
      */
     private Series seriesOf(final String organizationId, final List<PrometheusTypes.Label> labels) {
         final String orgKey = organizationId == null ? "" : organizationId;
-        final String key = Series.buildSeriesKey(orgKey, labels);
+        final SeriesKey key = new SeriesKey(orgKey, List.copyOf(labels));
         try {
-            return seriesCache.get(key, () -> new Series(organizationId, orgKey, labels, key));
+            return seriesCache.get(key, () -> new Series(organizationId, key));
         } catch (ExecutionException e) {
             // The Callable above only allocates; it cannot throw a checked exception.
             throw new IllegalStateException("Unexpected failure resolving a series", e);
@@ -274,11 +274,12 @@ public class ShardedWriteBatcher {
 
     /**
      * The shard hash must be stable for the lifetime of the process; per-series ordering only holds
-     * while a series maps to a single shard. Label sets and String.hashCode are both stable, and a
-     * restart is safe because no batches are in flight across it.
+     * while a series maps to a single shard. {@link SeriesKey#hashCode()} is memoized and label
+     * sets are immutable, so it is, and a restart is safe because no batches are in flight across
+     * it.
      */
     private int shardOf(final Series series) {
-        return Math.floorMod(series.seriesKey.hashCode(), shardCount);
+        return Math.floorMod(series.key.hashCode(), shardCount);
     }
 
     private void runShard(final int shard) {
@@ -348,14 +349,14 @@ public class ShardedWriteBatcher {
     private void flush(final List<Entry> batch) {
         // One request carries one X-Scope-OrgID header, so split by tenant first, then coalesce
         // each series into a single TimeSeries entry with its samples in timestamp order.
-        final Map<String, Map<String, List<Entry>>> byOrg = new LinkedHashMap<>();
+        final Map<String, Map<SeriesKey, List<Entry>>> byOrg = new LinkedHashMap<>();
         for (Entry entry : batch) {
             byOrg.computeIfAbsent(entry.orgKey(), k -> new LinkedHashMap<>())
                     .computeIfAbsent(entry.seriesKey(), k -> new ArrayList<>())
                     .add(entry);
         }
 
-        for (Map.Entry<String, Map<String, List<Entry>>> org : byOrg.entrySet()) {
+        for (Map.Entry<String, Map<SeriesKey, List<Entry>>> org : byOrg.entrySet()) {
             final PrometheusRemote.WriteRequest.Builder request = PrometheusRemote.WriteRequest.newBuilder();
             int sampleCount = 0;
             String organizationId = null;
@@ -586,19 +587,19 @@ public class ShardedWriteBatcher {
         }
 
         String orgKey() {
-            return series.orgKey;
+            return series.key.orgKey;
         }
 
         String organizationId() {
             return series.organizationId;
         }
 
-        String seriesKey() {
-            return series.seriesKey;
+        SeriesKey seriesKey() {
+            return series.key;
         }
 
         List<PrometheusTypes.Label> labels() {
-            return series.labels;
+            return series.key.labels;
         }
     }
 
@@ -609,35 +610,61 @@ public class ShardedWriteBatcher {
      * emits the meta tags as labels, so two samples whose meta tags differ are different wire series
      * and must not coalesce; and sanitization is lossy, so two distinct raw keys can emit one and
      * the same label set and must land on the same shard for per-series ordering to hold. The label
-     * list arrives sorted by name from the converter, so the key is deterministic.
+     * list arrives sorted by name from the converter, so equal series compare equal.
      *
      * <p>{@link #seriesCache} holds one of these per distinct series and every buffered
      * {@link Entry} for that series points at it, rather than each carrying its own copy of the
-     * label list and built key: at default sizing a shard can buffer tens of thousands of samples,
+     * label list and key: at default sizing a shard can buffer tens of thousands of samples,
      * almost always many samples per series, so per-sample duplication of series-level data is pure
      * waste - and heaviest exactly when a shard is backlogged, which is when the extra heap and GC
      * pressure can least be afforded.
      */
     private static final class Series {
         private final String organizationId;
+        private final SeriesKey key;
+
+        Series(final String organizationId, final SeriesKey key) {
+            this.organizationId = organizationId;
+            this.key = key;
+        }
+    }
+
+    /**
+     * A series' identity as a value type: the tenant plus the exact, immutable label set, compared
+     * structurally. Deliberately not a flattened string: label values may contain any bytes -
+     * sanitization only truncates them - so whatever delimiter a flattened encoding picked could
+     * also appear inside a value, and two distinct label sets could then collide on one key (e.g.
+     * with {@code \0}/{@code \1} delimiters, {@code {a="x", b="y"}} and {@code {a="x\0b\1y"}}
+     * flatten identically). A colliding key would coalesce foreign samples under the wrong labels
+     * for as long as {@link #seriesCache} kept the entry alive. Structural equality over the fields
+     * themselves leaves no encoding to collide in.
+     */
+    private static final class SeriesKey {
         private final String orgKey;
         private final List<PrometheusTypes.Label> labels;
-        private final String seriesKey;
+        private final int hash;
 
-        Series(final String organizationId, final String orgKey, final List<PrometheusTypes.Label> labels,
-               final String seriesKey) {
-            this.organizationId = organizationId;
+        SeriesKey(final String orgKey, final List<PrometheusTypes.Label> labels) {
             this.orgKey = orgKey;
             this.labels = labels;
-            this.seriesKey = seriesKey;
+            this.hash = 31 * orgKey.hashCode() + labels.hashCode();
         }
 
-        private static String buildSeriesKey(final String orgKey, final List<PrometheusTypes.Label> labels) {
-            final StringBuilder key = new StringBuilder(orgKey);
-            for (PrometheusTypes.Label label : labels) {
-                key.append('\0').append(label.getName()).append('\1').append(label.getValue());
+        @Override
+        public boolean equals(final Object o) {
+            if (this == o) {
+                return true;
             }
-            return key.toString();
+            if (!(o instanceof SeriesKey)) {
+                return false;
+            }
+            final SeriesKey other = (SeriesKey) o;
+            return hash == other.hash && orgKey.equals(other.orgKey) && labels.equals(other.labels);
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
         }
     }
 }
