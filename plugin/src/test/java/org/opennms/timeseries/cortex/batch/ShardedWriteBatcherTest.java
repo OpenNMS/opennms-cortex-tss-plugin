@@ -286,6 +286,31 @@ public class ShardedWriteBatcherTest {
     }
 
     /**
+     * A rejection of the whole request - bad credentials, wrong tenant, wrong endpoint - fails
+     * every series in it identically. Bisecting it the way a plain {@link StorageException} is
+     * bisected would corner nothing: it would just spend up to one request per series confirming a
+     * foregone conclusion while this shard sat idle and its queue filled up behind it. It must be
+     * dropped in one step instead.
+     */
+    @Test
+    public void dropsTheWholeBatchInOneStepOnANonIsolableFailure() {
+        sender.failNextSends(Integer.MAX_VALUE, new NonIsolableWriteException("simulated 401"));
+        batcher = builder().shardCount(1).maxBatchSamples(8).lingerMs(60_000).build();
+
+        for (int i = 0; i < 8; i++) {
+            batcher.enqueue(sample(gauge("series_" + i), BASE, i), null);
+        }
+
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> registry.meter("samplesLost").getCount() == 8);
+        // A bisecting implementation could spend up to 15 requests cornering 8 individually-poison
+        // series (n leaves + n-1 internal nodes); treating this as non-isolable costs exactly one.
+        assertEquals(1, sender.sendsStarted());
+        assertEquals(0, registry.meter("samplesWritten").getCount());
+        assertEquals(0, registry.meter("batch.retries").getCount());
+    }
+
+    /**
      * A non-retryable rejection of a coalesced request must not take every series in it down: the
      * batch is resent one series at a time, so only what the backend actually rejects is lost.
      */

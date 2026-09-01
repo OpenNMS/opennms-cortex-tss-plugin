@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,6 +42,8 @@ import org.slf4j.LoggerFactory;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 
 import prometheus.PrometheusRemote;
 import prometheus.PrometheusTypes;
@@ -69,16 +72,21 @@ import prometheus.PrometheusTypes;
  *
  * <p>Failure semantics: a batch that fails with a {@link RetryableWriteException} is retried in
  * place with exponential backoff up to {@code maxRetries} times; the shard sends nothing else while
- * that goes on. When a request carrying more than one series fails fatally, it is bisected and each
- * half resent (still sequentially, on the shard thread, so ordering holds), cornering a rejected
- * series in O(log n) extra requests rather than one request per series, so a single series the
- * backend rejects does not take unrelated samples down with it. One retry budget of
- * {@code maxRetries} is shared between a batch and every resend its isolation spawns, so a batch
- * occupies its shard for a bounded number of requests and backoffs even when the backend mixes
- * fatal and retryable failures. A series that still fails, or a request whose budget is exhausted,
- * is dropped and counted on the shared {@code samplesLost} meter, and the shard moves on. That
- * trades bounded head-of-line blocking for forward progress; samples enqueued behind a dropped
- * batch survive.
+ * that goes on. When a request carrying more than one series fails with a plain
+ * {@link org.opennms.integration.api.v1.timeseries.StorageException} - a rejection that plausibly
+ * names one bad series, such as an out-of-order sample - it is bisected and each half resent (still
+ * sequentially, on the shard thread, so ordering holds), cornering a rejected series in O(log n)
+ * extra requests rather than one request per series, so a single series the backend rejects does
+ * not take unrelated samples down with it. A {@link NonIsolableWriteException} - a rejection of the
+ * request itself, such as bad credentials or the wrong tenant, that every series in it would share
+ * - is never bisected: every half would fail identically, so isolating it could only spend up to one
+ * request per series confirming a foregone conclusion while the shard sat idle and its queue filled
+ * up behind it. One retry budget of {@code maxRetries} is shared between a batch and every resend
+ * its isolation spawns, so a batch occupies its shard for a bounded number of requests and backoffs
+ * even when the backend mixes fatal and retryable failures. A series that still fails, or a request
+ * whose budget is exhausted, is dropped and counted on the shared {@code samplesLost} meter, and the
+ * shard moves on. That trades bounded head-of-line blocking for forward progress; samples enqueued
+ * behind a dropped batch survive.
  */
 public class ShardedWriteBatcher {
 
@@ -106,6 +114,15 @@ public class ShardedWriteBatcher {
     private final List<BlockingQueue<Entry>> queues;
     private final List<Thread> shardThreads = new ArrayList<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
+
+    /**
+     * One {@link Series} per distinct series, shared by every {@link Entry} buffered for it,
+     * instead of each sample carrying its own copy of the label list and built series key. Weak
+     * values: once no buffered or in-flight Entry references a series any more, nothing keeps its
+     * entry alive, so this tracks currently-active series rather than growing with every series
+     * ever seen over the process lifetime.
+     */
+    private final Cache<String, Series> seriesCache = CacheBuilder.newBuilder().weakValues().build();
 
     private final Meter samplesWritten;
     private final Meter samplesLost;
@@ -229,8 +246,9 @@ public class ShardedWriteBatcher {
                     sample.getMetric(), e);
             return false;
         }
-        final Entry entry = new Entry(sample, organizationId, converted.getLabelsList());
-        final BlockingQueue<Entry> queue = queues.get(shardOf(entry));
+        final Series series = seriesOf(organizationId, converted.getLabelsList());
+        final Entry entry = new Entry(sample, series);
+        final BlockingQueue<Entry> queue = queues.get(shardOf(series));
         if (queue.offer(entry, Math.max(0, timeoutMs), TimeUnit.MILLISECONDS)) {
             return true;
         }
@@ -239,12 +257,28 @@ public class ShardedWriteBatcher {
     }
 
     /**
+     * Looks up, or creates, the shared {@link Series} for one sample's label set, so every buffered
+     * sample of a series points at one copy of its labels and key instead of carrying its own - see
+     * {@link #seriesCache}.
+     */
+    private Series seriesOf(final String organizationId, final List<PrometheusTypes.Label> labels) {
+        final String orgKey = organizationId == null ? "" : organizationId;
+        final String key = Series.buildSeriesKey(orgKey, labels);
+        try {
+            return seriesCache.get(key, () -> new Series(organizationId, orgKey, labels, key));
+        } catch (ExecutionException e) {
+            // The Callable above only allocates; it cannot throw a checked exception.
+            throw new IllegalStateException("Unexpected failure resolving a series", e);
+        }
+    }
+
+    /**
      * The shard hash must be stable for the lifetime of the process; per-series ordering only holds
      * while a series maps to a single shard. Label sets and String.hashCode are both stable, and a
      * restart is safe because no batches are in flight across it.
      */
-    private int shardOf(final Entry entry) {
-        return Math.floorMod(entry.seriesKey().hashCode(), shardCount);
+    private int shardOf(final Series series) {
+        return Math.floorMod(series.seriesKey.hashCode(), shardCount);
     }
 
     private void runShard(final int shard) {
@@ -327,11 +361,11 @@ public class ShardedWriteBatcher {
             String organizationId = null;
             for (List<Entry> series : org.getValue().values()) {
                 series.sort(Comparator.comparing(e -> e.sample.getTime()));
-                organizationId = series.get(0).organizationId;
+                organizationId = series.get(0).organizationId();
                 // Entries grouped here share one series key, and the key is derived from the label
                 // set, so any entry's labels describe the whole group.
                 final PrometheusTypes.TimeSeries.Builder ts = PrometheusTypes.TimeSeries.newBuilder()
-                        .addAllLabels(series.get(0).labels);
+                        .addAllLabels(series.get(0).labels());
                 for (Entry entry : series) {
                     ts.addSamples(PrometheusTypes.Sample.newBuilder()
                             .setTimestamp(entry.sample.getTime().toEpochMilli())
@@ -374,6 +408,13 @@ public class ShardedWriteBatcher {
                     drop(sampleCount, "interrupted during retry backoff", e);
                     return;
                 }
+            } catch (NonIsolableWriteException e) {
+                // The rejection applies to the whole request, not to any one series in it - see
+                // NonIsolableWriteException. Bisecting would only repeat the same failure at every
+                // leaf, for up to one request per series, while this shard sits idle and its queue
+                // backs up behind it. Drop the whole thing in one step instead.
+                drop(sampleCount, "the backend rejected the whole request, not a specific series", e);
+                return;
             } catch (StorageException e) {
                 final int seriesCount = request.getTimeseriesCount();
                 if (seriesCount > 1) {
@@ -534,37 +575,63 @@ public class ShardedWriteBatcher {
         }
     }
 
+    /** One buffered sample plus a reference to its series. See {@link Series} for why the two are split. */
     private static final class Entry {
         private final Sample sample;
-        private final String organizationId;
-        private final List<PrometheusTypes.Label> labels;
-        private final String seriesKey;
+        private final Series series;
 
-        Entry(final Sample sample, final String organizationId, final List<PrometheusTypes.Label> labels) {
+        Entry(final Sample sample, final Series series) {
             this.sample = Objects.requireNonNull(sample);
-            this.organizationId = organizationId;
-            this.labels = labels;
-            this.seriesKey = buildSeriesKey(orgKey(), labels);
+            this.series = Objects.requireNonNull(series);
         }
 
         String orgKey() {
-            return organizationId == null ? "" : organizationId;
+            return series.orgKey;
+        }
+
+        String organizationId() {
+            return series.organizationId;
         }
 
         String seriesKey() {
-            return seriesKey;
+            return series.seriesKey;
         }
 
-        /**
-         * Identity of the series this sample belongs to: the exact label set it will carry on the
-         * wire, plus the tenant, since two tenants may legitimately carry the same series. Nothing
-         * upstream of the converter can stand in for this. Metric.getKey() covers only the intrinsic
-         * tags while the converter also emits the meta tags as labels, so two samples whose meta
-         * tags differ are different wire series and must not coalesce; and sanitization is lossy,
-         * so two distinct raw keys can emit one and the same label set and must land on the same
-         * shard for per-series ordering to hold. The label list arrives sorted by name from the
-         * converter, so the key is deterministic.
-         */
+        List<PrometheusTypes.Label> labels() {
+            return series.labels;
+        }
+    }
+
+    /**
+     * Identity of one series: the exact label set it will carry on the wire, plus the tenant, since
+     * two tenants may legitimately carry the same series. Nothing upstream of the converter can
+     * stand in for this. Metric.getKey() covers only the intrinsic tags while the converter also
+     * emits the meta tags as labels, so two samples whose meta tags differ are different wire series
+     * and must not coalesce; and sanitization is lossy, so two distinct raw keys can emit one and
+     * the same label set and must land on the same shard for per-series ordering to hold. The label
+     * list arrives sorted by name from the converter, so the key is deterministic.
+     *
+     * <p>{@link #seriesCache} holds one of these per distinct series and every buffered
+     * {@link Entry} for that series points at it, rather than each carrying its own copy of the
+     * label list and built key: at default sizing a shard can buffer tens of thousands of samples,
+     * almost always many samples per series, so per-sample duplication of series-level data is pure
+     * waste - and heaviest exactly when a shard is backlogged, which is when the extra heap and GC
+     * pressure can least be afforded.
+     */
+    private static final class Series {
+        private final String organizationId;
+        private final String orgKey;
+        private final List<PrometheusTypes.Label> labels;
+        private final String seriesKey;
+
+        Series(final String organizationId, final String orgKey, final List<PrometheusTypes.Label> labels,
+               final String seriesKey) {
+            this.organizationId = organizationId;
+            this.orgKey = orgKey;
+            this.labels = labels;
+            this.seriesKey = seriesKey;
+        }
+
         private static String buildSeriesKey(final String orgKey, final List<PrometheusTypes.Label> labels) {
             final StringBuilder key = new StringBuilder(orgKey);
             for (PrometheusTypes.Label label : labels) {
