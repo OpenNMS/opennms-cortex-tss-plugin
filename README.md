@@ -67,6 +67,7 @@ property-set batchShardCapacity 65536
 property-set batchMaxRetries 3
 property-set batchRetryBackoffMs 1000
 property-set batchEnqueueTimeoutMs 5000
+property-set jmxReportingEnabled false
 
 config:update
 ```
@@ -156,6 +157,84 @@ Sizing notes:
 The batcher adds three metrics to the `opennms-cortex:stats` output: `batch.batchesSent`,
 `batch.retries`, and the `batch.bufferedSamples` gauge. `samplesWritten` and `samplesLost` keep
 their meaning: samples acknowledged by the backend, and samples dropped anywhere in the plugin.
+
+## Monitoring the plugin
+
+The plugin keeps its own counters in a metric registry: `samplesWritten` and `samplesLost`
+(samples acknowledged by the backend, and samples dropped anywhere in the plugin), the
+external-tags cache meters, HTTP client gauges, and — with batching enabled — the `batch.*`
+metrics described above. There are two ways to read it:
+
+- **Interactively**, from the Karaf shell: `opennms-cortex:stats` prints a one-shot dump of the
+  whole registry.
+- **Continuously**, over JMX — **opt-in, off by default**: with `jmxReportingEnabled=true`, the
+  registry is mirrored as MBeans in the OpenNMS JVM under the domain
+  `org.opennms.plugins.tss.prometheus`. Object names follow
+  `org.opennms.plugins.tss.prometheus:name=<metric>,type=<meters|gauges>`; meters carry a `Count`
+  attribute, gauges a `Value`. The publisher is implemented directly on the JDK's
+  `javax.management` API — no extra bundles, nothing that can fail to wire — and it announces
+  itself in the log at INFO on every start: `JMX metric reporting started: N MBeans registered
+  in domain org.opennms.plugins.tss.prometheus.` If that line is absent with the flag enabled,
+  reporting did not start and the log says why; it is isolated from the storage path either way.
+
+The JMX side means the collection already gathering OpenNMS's own JVM statistics (the
+`OpenNMS-JVM` service, collection `jsr160`, auto-bound to the OpenNMS node by the shipped
+`OpenNMS-JVM` detector in the default foreign-source definition) can trend, graph, and alert on
+the plugin's counters — `samplesLost` is the one to watch — with configuration only: no core
+changes, no rebuild. Two steps:
+
+1. Enable `jmxReportingEnabled=true` in the plugin config
+   (`etc/org.opennms.plugins.tss.prometheus.cfg`, or `config:edit` in the Karaf shell).
+2. Edit `$OPENNMS_HOME/etc/jmx-datacollection-config.xml` and add these mbeans inside the
+   existing `<jmx-collection name="jsr160">` element's `<mbeans>` section:
+
+```xml
+            <mbean name="PrometheusWriteSamples"
+                   objectname="org.opennms.plugins.tss.prometheus:name=samplesWritten,type=meters">
+                <attrib name="Count" alias="samplesWritten" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusLostSamples"
+                   objectname="org.opennms.plugins.tss.prometheus:name=samplesLost,type=meters">
+                <attrib name="Count" alias="samplesLost" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusBatchesSent"
+                   objectname="org.opennms.plugins.tss.prometheus:name=batch.batchesSent,type=meters">
+                <attrib name="Count" alias="batchesSent" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusBatchRetries"
+                   objectname="org.opennms.plugins.tss.prometheus:name=batch.retries,type=meters">
+                <attrib name="Count" alias="batchRetries" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusBatchBuffered"
+                   objectname="org.opennms.plugins.tss.prometheus:name=batch.bufferedSamples,type=gauges">
+                <attrib name="Value" alias="bufferedSamples" type="gauge"/>
+            </mbean>
+```
+
+Then reload collectd (`bin/send-event.pl uei.opennms.org/internal/reloadDaemonConfig --parm
+'daemonName Collectd'`) or restart OpenNMS. The next `OpenNMS-JVM` collection cycle picks the new
+mbeans up; no new service, no collectd-configuration.xml change, no provisioning work.
+
+**Do not** try to extend `jsr160` from a file in `jmx-datacollection-config.d/` instead: OpenNMS
+does not merge same-named collections — the last one loaded replaces the other wholesale
+(`JmxDatacollectionConfig#merge` appends collections and the config DAO maps them by name), so a
+`.d` file named `jsr160` would silently replace the stock collection and its JVM statistics.
+
+A dedicated collection and service (a `.d` file with its own collection name, plus a `<service>`
+and `<collector>` entry in `collectd-configuration.xml` modeled on `OpenNMS-JVM`) also works and
+keeps the shipped file pristine, but requires one extra step the `jsr160` route avoids: collectd
+only collects services bound to a node's interface, and no detector exists for a custom service
+name — so the service must be added to the OpenNMS node's requisition (or a `Jsr160Detector`
+with the matching name added to its foreign-source definition) and synchronized.
+
+Notes:
+- The `batch.*` MBeans only exist while `batchingEnabled=true`; without batching, that part of the
+  collection simply yields no data.
+- The counters are per-JVM and reset on restart; `type="counter"` in the collection definition
+  handles that the same way any counter reset is handled.
+- The collected series are stored through this very plugin, which is exactly what you want for
+  the "is batching losing samples?" comparison: a nonzero `samplesLost` rate trends in the same
+  place as everything else.
 
 ## Sample ordering and out-of-order rejections
 

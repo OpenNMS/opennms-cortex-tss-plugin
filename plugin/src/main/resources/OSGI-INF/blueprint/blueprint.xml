@@ -28,6 +28,7 @@
             <cm:property name="batchMaxRetries" value="3" />
             <cm:property name="batchRetryBackoffMs" value="1000" />
             <cm:property name="batchEnqueueTimeoutMs" value="5000" />
+            <cm:property name="jmxReportingEnabled" value="false" />
         </cm:default-properties>
     </cm:property-placeholder>
 
@@ -52,6 +53,7 @@
         <argument value="${batchMaxRetries}" />
         <argument value="${batchRetryBackoffMs}" />
         <argument value="${batchEnqueueTimeoutMs}" />
+        <argument value="${jmxReportingEnabled}" />
     </bean>
 
     <!--Key-value store -->
