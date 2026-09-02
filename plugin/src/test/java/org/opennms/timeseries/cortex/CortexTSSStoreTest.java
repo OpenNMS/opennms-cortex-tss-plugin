@@ -651,6 +651,77 @@ public class CortexTSSStoreTest {
         assertEquals(1, request.getTimeseriesCount());
     }
 
+    /**
+     * A 401 rejects the request itself, not either series in it - wrong credentials, wrong
+     * tenant, wrong endpoint. Bisecting to isolate an offender would corner nothing here, so the
+     * batch is dropped after exactly one request instead of the up-to-three a bisecting
+     * implementation would spend cornering two series individually.
+     */
+    @Test
+    public void batchedWritesDropImmediatelyOnANonIsolableStatus() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(401));
+        tss = storage(CortexTSSConfig.builder()
+                .batchingEnabled(true)
+                .batchShards(1)
+                .batchLingerMs(100)
+                .batchMaxRetries(5)
+                .batchRetryBackoffMs(10));
+
+        Instant t = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        tss.store(List.of(sample(gauge("batched_401_a"), t, 1.0), sample(gauge("batched_401_b"), t, 2.0)));
+
+        awaitMeter("samplesLost", 2);
+        assertEquals("a request-level rejection must not be retried or bisected",
+                1, server.getRequestCount());
+        assertEquals(0, meter("samplesWritten"));
+    }
+
+    /**
+     * The classification is not an enumerated list: every non-retryable 4xx short of 400 and 413
+     * is request-level. 415 - an unsupported payload encoding - stands in for the long tail.
+     */
+    @Test
+    public void batchedWritesDropImmediatelyOnAnyRequestLevel4xx() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(415));
+        tss = storage(CortexTSSConfig.builder()
+                .batchingEnabled(true)
+                .batchShards(1)
+                .batchLingerMs(100)
+                .batchMaxRetries(5)
+                .batchRetryBackoffMs(10));
+
+        Instant t = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        tss.store(List.of(sample(gauge("batched_415_a"), t, 1.0), sample(gauge("batched_415_b"), t, 2.0)));
+
+        awaitMeter("samplesLost", 2);
+        assertEquals("a request-level rejection must not be retried or bisected",
+                1, server.getRequestCount());
+        assertEquals(0, meter("samplesWritten"));
+    }
+
+    /**
+     * A plain 400 plausibly names one bad series (an out-of-order or duplicate sample, an invalid
+     * label), so unlike the request-level statuses above it is still bisected to isolate the
+     * offender: the coalesced request, then each half.
+     */
+    @Test
+    public void batchedWritesIsolateAPoisonSeriesOnAPlain400() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            server.enqueue(new MockResponse().setResponseCode(400).setBody("out of order sample"));
+        }
+        tss = storage(CortexTSSConfig.builder()
+                .batchingEnabled(true)
+                .batchShards(1)
+                .batchLingerMs(100));
+
+        Instant t = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        tss.store(List.of(sample(gauge("batched_400_a"), t, 1.0), sample(gauge("batched_400_b"), t, 2.0)));
+
+        awaitMeter("samplesLost", 2);
+        assertEquals("a 400 must still be bisected: the coalesced request, then each half",
+                3, server.getRequestCount());
+    }
+
     // ------------------------------------------------------------------
     // Harness
     // ------------------------------------------------------------------

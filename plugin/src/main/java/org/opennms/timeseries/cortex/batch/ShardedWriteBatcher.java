@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,6 +42,8 @@ import org.slf4j.LoggerFactory;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 
 import prometheus.PrometheusRemote;
 import prometheus.PrometheusTypes;
@@ -69,16 +72,24 @@ import prometheus.PrometheusTypes;
  *
  * <p>Failure semantics: a batch that fails with a {@link RetryableWriteException} is retried in
  * place with exponential backoff up to {@code maxRetries} times; the shard sends nothing else while
- * that goes on. When a request carrying more than one series fails fatally, it is bisected and each
- * half resent (still sequentially, on the shard thread, so ordering holds), cornering a rejected
- * series in O(log n) extra requests rather than one request per series, so a single series the
- * backend rejects does not take unrelated samples down with it. One retry budget of
- * {@code maxRetries} is shared between a batch and every resend its isolation spawns, so a batch
- * occupies its shard for a bounded number of requests and backoffs even when the backend mixes
- * fatal and retryable failures. A series that still fails, or a request whose budget is exhausted,
- * is dropped and counted on the shared {@code samplesLost} meter, and the shard moves on. That
- * trades bounded head-of-line blocking for forward progress; samples enqueued behind a dropped
- * batch survive.
+ * that goes on. When a request carrying more than one series fails with a plain
+ * {@link org.opennms.integration.api.v1.timeseries.StorageException} - a rejection that plausibly
+ * names one bad series, such as an out-of-order sample - it is bisected and each half resent (still
+ * sequentially, on the shard thread, so ordering holds), cornering a rejected series in O(log n)
+ * extra requests rather than one request per series, so a single series the backend rejects does
+ * not take unrelated samples down with it. A {@link NonIsolableWriteException} - a rejection of the
+ * request itself, such as bad credentials or the wrong tenant, that every series in it would share
+ * - is never bisected: every half would fail identically, so isolating it could only spend up to one
+ * request per series confirming a foregone conclusion while the shard sat idle and its queue filled
+ * up behind it. Two budgets, shared between a batch and every resend its isolation spawns, bound
+ * the shard's exposure even when the backend mixes fatal and retryable failures: {@code maxRetries}
+ * caps the backoffs spent on retryable failures, and a consecutive-rejection cap sized to the
+ * bisection depth cuts isolation short when every request fails without a single success - the
+ * signature of a rejection that is request-wide in effect (timestamps the backend no longer
+ * accepts, a tenant over its series limit) even when its status code says per-series. A series that still fails, or a request
+ * whose budget is exhausted, is dropped and counted on the shared {@code samplesLost} meter, and the
+ * shard moves on. That trades bounded head-of-line blocking for forward progress; samples enqueued
+ * behind a dropped batch survive.
  */
 public class ShardedWriteBatcher {
 
@@ -106,6 +117,15 @@ public class ShardedWriteBatcher {
     private final List<BlockingQueue<Entry>> queues;
     private final List<Thread> shardThreads = new ArrayList<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
+
+    /**
+     * One {@link Series} per distinct series, shared by every {@link Entry} buffered for it,
+     * instead of each sample carrying its own copy of the label list and built series key. Weak
+     * values: once no buffered or in-flight Entry references a series any more, nothing keeps its
+     * entry alive, so this tracks currently-active series rather than growing with every series
+     * ever seen over the process lifetime.
+     */
+    private final Cache<SeriesKey, Series> seriesCache = CacheBuilder.newBuilder().weakValues().build();
 
     private final Meter samplesWritten;
     private final Meter samplesLost;
@@ -229,8 +249,9 @@ public class ShardedWriteBatcher {
                     sample.getMetric(), e);
             return false;
         }
-        final Entry entry = new Entry(sample, organizationId, converted.getLabelsList());
-        final BlockingQueue<Entry> queue = queues.get(shardOf(entry));
+        final Series series = seriesOf(organizationId, converted.getLabelsList());
+        final Entry entry = new Entry(sample, series);
+        final BlockingQueue<Entry> queue = queues.get(shardOf(series));
         if (queue.offer(entry, Math.max(0, timeoutMs), TimeUnit.MILLISECONDS)) {
             return true;
         }
@@ -239,12 +260,29 @@ public class ShardedWriteBatcher {
     }
 
     /**
-     * The shard hash must be stable for the lifetime of the process; per-series ordering only holds
-     * while a series maps to a single shard. Label sets and String.hashCode are both stable, and a
-     * restart is safe because no batches are in flight across it.
+     * Looks up, or creates, the shared {@link Series} for one sample's label set, so every buffered
+     * sample of a series points at one copy of its labels and key instead of carrying its own - see
+     * {@link #seriesCache}.
      */
-    private int shardOf(final Entry entry) {
-        return Math.floorMod(entry.seriesKey().hashCode(), shardCount);
+    private Series seriesOf(final String organizationId, final List<PrometheusTypes.Label> labels) {
+        final String orgKey = organizationId == null ? "" : organizationId;
+        final SeriesKey key = new SeriesKey(orgKey, List.copyOf(labels));
+        try {
+            return seriesCache.get(key, () -> new Series(organizationId, key));
+        } catch (ExecutionException e) {
+            // The Callable above only allocates; it cannot throw a checked exception.
+            throw new IllegalStateException("Unexpected failure resolving a series", e);
+        }
+    }
+
+    /**
+     * The shard hash must be stable for the lifetime of the process; per-series ordering only holds
+     * while a series maps to a single shard. {@link SeriesKey#hashCode()} is memoized and label
+     * sets are immutable, so it is, and a restart is safe because no batches are in flight across
+     * it.
+     */
+    private int shardOf(final Series series) {
+        return Math.floorMod(series.key.hashCode(), shardCount);
     }
 
     private void runShard(final int shard) {
@@ -314,24 +352,24 @@ public class ShardedWriteBatcher {
     private void flush(final List<Entry> batch) {
         // One request carries one X-Scope-OrgID header, so split by tenant first, then coalesce
         // each series into a single TimeSeries entry with its samples in timestamp order.
-        final Map<String, Map<String, List<Entry>>> byOrg = new LinkedHashMap<>();
+        final Map<String, Map<SeriesKey, List<Entry>>> byOrg = new LinkedHashMap<>();
         for (Entry entry : batch) {
             byOrg.computeIfAbsent(entry.orgKey(), k -> new LinkedHashMap<>())
                     .computeIfAbsent(entry.seriesKey(), k -> new ArrayList<>())
                     .add(entry);
         }
 
-        for (Map.Entry<String, Map<String, List<Entry>>> org : byOrg.entrySet()) {
+        for (Map.Entry<String, Map<SeriesKey, List<Entry>>> org : byOrg.entrySet()) {
             final PrometheusRemote.WriteRequest.Builder request = PrometheusRemote.WriteRequest.newBuilder();
             int sampleCount = 0;
             String organizationId = null;
             for (List<Entry> series : org.getValue().values()) {
                 series.sort(Comparator.comparing(e -> e.sample.getTime()));
-                organizationId = series.get(0).organizationId;
+                organizationId = series.get(0).organizationId();
                 // Entries grouped here share one series key, and the key is derived from the label
                 // set, so any entry's labels describe the whole group.
                 final PrometheusTypes.TimeSeries.Builder ts = PrometheusTypes.TimeSeries.newBuilder()
-                        .addAllLabels(series.get(0).labels);
+                        .addAllLabels(series.get(0).labels());
                 for (Entry entry : series) {
                     ts.addSamples(PrometheusTypes.Sample.newBuilder()
                             .setTimestamp(entry.sample.getTime().toEpochMilli())
@@ -340,17 +378,26 @@ public class ShardedWriteBatcher {
                 }
                 request.addTimeseries(ts);
             }
-            sendWithRetry(request.build(), organizationId, sampleCount, new RetryBudget(maxRetries));
+            final PrometheusRemote.WriteRequest built = request.build();
+            sendWithRetry(built, organizationId, sampleCount,
+                    new RetryBudget(maxRetries, rejectionCapFor(built.getTimeseriesCount())));
         }
     }
 
     private void sendWithRetry(final PrometheusRemote.WriteRequest request, final String organizationId,
                                final int sampleCount, final RetryBudget budget) {
+        if (request.getTimeseriesCount() > 1 && budget.isSystemic()) {
+            // A sibling higher up already concluded the rejection is request-wide; do not spend
+            // another request confirming it for this half.
+            drop(sampleCount, "isolation already concluded the rejection is systemic", null);
+            return;
+        }
         for (int attempt = 0; ; attempt++) {
             try {
                 sender.send(request, organizationId);
                 batchesSent.mark();
                 samplesWritten.mark(sampleCount);
+                budget.noteSuccess();
                 return;
             } catch (RetryableWriteException e) {
                 // The budget is shared with every resend spawned by isolating this request's
@@ -374,9 +421,32 @@ public class ShardedWriteBatcher {
                     drop(sampleCount, "interrupted during retry backoff", e);
                     return;
                 }
+            } catch (NonIsolableWriteException e) {
+                // The rejection applies to the whole request, not to any one series in it - see
+                // NonIsolableWriteException. Bisecting would only repeat the same failure at every
+                // leaf, for up to one request per series, while this shard sits idle and its queue
+                // backs up behind it. Drop the whole thing in one step instead.
+                drop(sampleCount, "the backend rejected the whole request, not a specific series", e);
+                return;
             } catch (StorageException e) {
                 final int seriesCount = request.getTimeseriesCount();
+                // Only a multi-series rejection is evidence of a systemic failure: a single-series
+                // rejection is isolation succeeding - it has named the offender.
+                final boolean systemic = seriesCount > 1 && budget.noteRejection();
                 if (seriesCount > 1) {
+                    if (systemic) {
+                        // Every request of this batch's isolation has failed, for longer than any
+                        // single rejected series can explain (the longest all-failing run a lone
+                        // poison series produces is the bisection path down to it). The rejection
+                        // is request-wide in effect - a 400 for timestamps the backend no longer
+                        // accepts, a tenant over its series limit - even though its status says
+                        // per-series. Bisecting further would only replay the failure at every
+                        // node, up to one request per series; drop the rest in one step instead.
+                        drop(sampleCount, "isolation was cut short after " + budget.rejectionCap
+                                + " consecutive rejections without a single accepted request; "
+                                + "treating the rejection as systemic, not per-series", e);
+                        return;
+                    }
                     // A non-retryable rejection names one offender at best, but this request
                     // coalesces many unrelated series. Bisect and resend each half - still
                     // sequentially, on this thread, so ordering holds. A healthy half is
@@ -416,14 +486,22 @@ public class ShardedWriteBatcher {
     }
 
     /**
-     * Retries left for one original batch and everything its fatal-rejection isolation resends.
-     * Only touched from the owning shard thread, so a plain int suffices.
+     * Bounds for one original batch and everything its isolation resends, shared across the whole
+     * recursion. Two independent limits: retries left for retryable failures (backoffs), and the
+     * longest run of consecutive non-retryable rejections tolerated before the rejection is
+     * declared systemic - a lone poison series can only produce an all-failing run as long as the
+     * bisection path down to it, so a longer run means every leaf would fail and isolation is
+     * confirming a foregone conclusion at up to one request per series. Only touched from the
+     * owning shard thread, so plain ints suffice.
      */
     private static final class RetryBudget {
         private int remaining;
+        private final int rejectionCap;
+        private int consecutiveRejections;
 
-        RetryBudget(final int remaining) {
+        RetryBudget(final int remaining, final int rejectionCap) {
             this.remaining = remaining;
+            this.rejectionCap = rejectionCap;
         }
 
         boolean tryConsume() {
@@ -433,6 +511,35 @@ public class ShardedWriteBatcher {
             remaining--;
             return true;
         }
+
+        /** @return true when this rejection makes the run long enough to call systemic */
+        boolean noteRejection() {
+            consecutiveRejections++;
+            return isSystemic();
+        }
+
+        void noteSuccess() {
+            consecutiveRejections = 0;
+        }
+
+        boolean isSystemic() {
+            return consecutiveRejections >= rejectionCap;
+        }
+    }
+
+    /**
+     * The longest all-failing run a single rejected series can cause is the original request plus
+     * the bisection path down to that series - ceil(log2(seriesCount)) requests - so anything
+     * beyond that, plus margin for off-by-one shapes, is systemic.
+     */
+    static int rejectionCapFor(final int seriesCount) {
+        int depth = 0;
+        int n = 1;
+        while (n < seriesCount) {
+            n <<= 1;
+            depth++;
+        }
+        return depth + 2;
     }
 
     private void drop(final int sampleCount, final String reason, final Exception cause) {
@@ -534,43 +641,95 @@ public class ShardedWriteBatcher {
         }
     }
 
+    /** One buffered sample plus a reference to its series. See {@link Series} for why the two are split. */
     private static final class Entry {
         private final Sample sample;
-        private final String organizationId;
-        private final List<PrometheusTypes.Label> labels;
-        private final String seriesKey;
+        private final Series series;
 
-        Entry(final Sample sample, final String organizationId, final List<PrometheusTypes.Label> labels) {
+        Entry(final Sample sample, final Series series) {
             this.sample = Objects.requireNonNull(sample);
-            this.organizationId = organizationId;
-            this.labels = labels;
-            this.seriesKey = buildSeriesKey(orgKey(), labels);
+            this.series = Objects.requireNonNull(series);
         }
 
         String orgKey() {
-            return organizationId == null ? "" : organizationId;
+            return series.key.orgKey;
         }
 
-        String seriesKey() {
-            return seriesKey;
+        String organizationId() {
+            return series.organizationId;
         }
 
-        /**
-         * Identity of the series this sample belongs to: the exact label set it will carry on the
-         * wire, plus the tenant, since two tenants may legitimately carry the same series. Nothing
-         * upstream of the converter can stand in for this. Metric.getKey() covers only the intrinsic
-         * tags while the converter also emits the meta tags as labels, so two samples whose meta
-         * tags differ are different wire series and must not coalesce; and sanitization is lossy,
-         * so two distinct raw keys can emit one and the same label set and must land on the same
-         * shard for per-series ordering to hold. The label list arrives sorted by name from the
-         * converter, so the key is deterministic.
-         */
-        private static String buildSeriesKey(final String orgKey, final List<PrometheusTypes.Label> labels) {
-            final StringBuilder key = new StringBuilder(orgKey);
-            for (PrometheusTypes.Label label : labels) {
-                key.append('\0').append(label.getName()).append('\1').append(label.getValue());
+        SeriesKey seriesKey() {
+            return series.key;
+        }
+
+        List<PrometheusTypes.Label> labels() {
+            return series.key.labels;
+        }
+    }
+
+    /**
+     * Identity of one series: the exact label set it will carry on the wire, plus the tenant, since
+     * two tenants may legitimately carry the same series. Nothing upstream of the converter can
+     * stand in for this. Metric.getKey() covers only the intrinsic tags while the converter also
+     * emits the meta tags as labels, so two samples whose meta tags differ are different wire series
+     * and must not coalesce; and sanitization is lossy, so two distinct raw keys can emit one and
+     * the same label set and must land on the same shard for per-series ordering to hold. The label
+     * list arrives sorted by name from the converter, so equal series compare equal.
+     *
+     * <p>{@link #seriesCache} holds one of these per distinct series and every buffered
+     * {@link Entry} for that series points at it, rather than each carrying its own copy of the
+     * label list and key: at default sizing a shard can buffer tens of thousands of samples,
+     * almost always many samples per series, so per-sample duplication of series-level data is pure
+     * waste - and heaviest exactly when a shard is backlogged, which is when the extra heap and GC
+     * pressure can least be afforded.
+     */
+    private static final class Series {
+        private final String organizationId;
+        private final SeriesKey key;
+
+        Series(final String organizationId, final SeriesKey key) {
+            this.organizationId = organizationId;
+            this.key = key;
+        }
+    }
+
+    /**
+     * A series' identity as a value type: the tenant plus the exact, immutable label set, compared
+     * structurally. Deliberately not a flattened string: label values may contain any bytes -
+     * sanitization only truncates them - so whatever delimiter a flattened encoding picked could
+     * also appear inside a value, and two distinct label sets could then collide on one key (e.g.
+     * with {@code \0}/{@code \1} delimiters, {@code {a="x", b="y"}} and {@code {a="x\0b\1y"}}
+     * flatten identically). A colliding key would coalesce foreign samples under the wrong labels
+     * for as long as {@link #seriesCache} kept the entry alive. Structural equality over the fields
+     * themselves leaves no encoding to collide in.
+     */
+    private static final class SeriesKey {
+        private final String orgKey;
+        private final List<PrometheusTypes.Label> labels;
+        private final int hash;
+
+        SeriesKey(final String orgKey, final List<PrometheusTypes.Label> labels) {
+            this.orgKey = orgKey;
+            this.labels = labels;
+            this.hash = 31 * orgKey.hashCode() + labels.hashCode();
+        }
+
+        @Override
+        public boolean equals(final Object o) {
+            if (this == o) {
+                return true;
             }
-            return key.toString();
+            if (!(o instanceof SeriesKey)) {
+                return false;
+            }
+            final SeriesKey other = (SeriesKey) o;
+            return hash == other.hash && orgKey.equals(other.orgKey) && labels.equals(other.labels);
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
         }
     }
 }

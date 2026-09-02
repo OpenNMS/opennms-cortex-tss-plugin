@@ -32,6 +32,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -204,6 +205,46 @@ public class ShardedWriteBatcherTest {
         assertAscending(sent.request.getTimeseries(0));
     }
 
+    /**
+     * The inverse guarantee: label values may contain any bytes - sanitization only truncates them
+     * - so no flattened key encoding is collision-free. These two label sets flatten identically
+     * under the {@code \0}/{@code \1} delimiter scheme the series key once used ({@code {v="x",
+     * w="y"}} vs {@code {v="x\0w\1y"}}), but they are different wire series: coalescing them would
+     * store one series' samples under the other's labels for as long as the series cache kept the
+     * colliding entry alive.
+     */
+    @Test
+    public void keepsSeriesDistinctWhenALabelValueEmbedsAnotherSeriesKey() {
+        batcher = builder().shardCount(1).maxBatchSamples(2).lingerMs(60_000).build();
+
+        Metric twoTags = ImmutableMetric.builder()
+                .intrinsicTag("resourceId", "test/delimiters")
+                .intrinsicTag("name", "delimiter_collision")
+                .metaTag("mtype", Metric.Mtype.gauge.name())
+                .metaTag("v", "x")
+                .metaTag("w", "y")
+                .build();
+        Metric oneTag = ImmutableMetric.builder()
+                .intrinsicTag("resourceId", "test/delimiters")
+                .intrinsicTag("name", "delimiter_collision")
+                .metaTag("mtype", Metric.Mtype.gauge.name())
+                .metaTag("v", "x\0w\1y")
+                .build();
+
+        batcher.enqueue(sample(twoTags, BASE, 1.0), null);
+        batcher.enqueue(sample(oneTag, BASE.plusSeconds(1), 2.0), null);
+
+        SentBatch sent = sender.awaitNext();
+        assertEquals("label sets that flatten identically are still two series",
+                2, sent.request.getTimeseriesCount());
+        for (PrometheusTypes.TimeSeries ts : sent.request.getTimeseriesList()) {
+            assertEquals(1, ts.getSamplesCount());
+            double expected = "y".equals(labelValue(ts, "w")) ? 1.0 : 2.0;
+            assertEquals("each sample must sit under its own label set",
+                    expected, ts.getSamples(0).getValue(), 0.0);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Ordering
     // ------------------------------------------------------------------
@@ -282,6 +323,31 @@ public class ShardedWriteBatcherTest {
                 .until(() -> registry.meter("samplesLost").getCount() == 1);
         // A fatal failure must not be retried: one send, no retry marks.
         assertEquals(1, sender.sendsStarted());
+        assertEquals(0, registry.meter("batch.retries").getCount());
+    }
+
+    /**
+     * A rejection of the whole request - bad credentials, wrong tenant, wrong endpoint - fails
+     * every series in it identically. Bisecting it the way a plain {@link StorageException} is
+     * bisected would corner nothing: it would just spend up to one request per series confirming a
+     * foregone conclusion while this shard sat idle and its queue filled up behind it. It must be
+     * dropped in one step instead.
+     */
+    @Test
+    public void dropsTheWholeBatchInOneStepOnANonIsolableFailure() {
+        sender.failNextSends(Integer.MAX_VALUE, new NonIsolableWriteException("simulated 401"));
+        batcher = builder().shardCount(1).maxBatchSamples(8).lingerMs(60_000).build();
+
+        for (int i = 0; i < 8; i++) {
+            batcher.enqueue(sample(gauge("series_" + i), BASE, i), null);
+        }
+
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> registry.meter("samplesLost").getCount() == 8);
+        // A bisecting implementation could spend up to 15 requests cornering 8 individually-poison
+        // series (n leaves + n-1 internal nodes); treating this as non-isolable costs exactly one.
+        assertEquals(1, sender.sendsStarted());
+        assertEquals(0, registry.meter("samplesWritten").getCount());
         assertEquals(0, registry.meter("batch.retries").getCount());
     }
 
@@ -374,6 +440,60 @@ public class ShardedWriteBatcherTest {
      * Nothing the send path throws may kill the shard thread: a dead shard silently strands every
      * series hashed to it until restart while the other shards look healthy.
      */
+    /**
+     * A rejection that is request-wide in effect but arrives as a plain 400 - timestamps the
+     * backend no longer accepts, a tenant over its series limit - must not cost one request per
+     * series: with n series all failing, naive bisection spends 2n-1 sequential requests on the
+     * shard thread while its queue fills. The consecutive-rejection cap concludes "systemic" after
+     * at most the bisection depth plus margin and drops the rest in one step.
+     */
+    @Test
+    public void boundsIsolationWhenEveryRequestIsRejected() throws Exception {
+        sender.failNextSends(Integer.MAX_VALUE, new StorageException("simulated request-wide 400"));
+        batcher = builder().shardCount(1).maxBatchSamples(64).lingerMs(60_000)
+                .maxRetries(3).retryBackoffMs(10).build();
+
+        // 64 distinct series, one sample each - the OpenNMS store() shape.
+        for (int i = 0; i < 64; i++) {
+            assertTrue(batcher.enqueue(sample(gauge("systemic_series_" + i), BASE.plusSeconds(i), i), null));
+        }
+        Awaitility.await().atMost(Duration.ofSeconds(10))
+                .until(() -> registry.meter("samplesLost").getCount() == 64);
+
+        // Cap for 64 series is log2(64)+2 = 8 consecutive rejections; the recursion unwind may
+        // spend a few more single requests before every sibling sees the systemic conclusion.
+        // The point is the order of magnitude: nowhere near 2n-1 = 127.
+        assertTrue("a systemic rejection must not bisect toward one request per series, sent "
+                + sender.sendsStarted(), sender.sendsStarted() <= 16);
+    }
+
+    /**
+     * The systemic conclusion must only be fed by multi-series rejections: a single-series (leaf)
+     * rejection is isolation succeeding - it has named the offender. Three poison series enqueued
+     * adjacently produce runs of leaf rejections; if those counted, the run would cross the cap
+     * (5 for 8 series) and the remaining healthy series would be wholesale-dropped as "systemic".
+     */
+    @Test
+    public void leafRejectionsDoNotCountTowardTheSystemicConclusion() {
+        sender.poisonSeriesNamed("cluster_poison_a", "cluster_poison_b", "cluster_poison_c");
+        batcher = builder().shardCount(1).maxBatchSamples(8).lingerMs(60_000).build();
+
+        // Poisons first, so their leaf rejections cluster into the longest possible run.
+        batcher.enqueue(sample(gauge("cluster_poison_a"), BASE, 1.0), null);
+        batcher.enqueue(sample(gauge("cluster_poison_b"), BASE, 2.0), null);
+        batcher.enqueue(sample(gauge("cluster_poison_c"), BASE, 3.0), null);
+        for (int i = 0; i < 5; i++) {
+            batcher.enqueue(sample(gauge("cluster_healthy_" + i), BASE, 10.0 + i), null);
+        }
+
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> registry.meter("samplesLost").getCount()
+                        + registry.meter("samplesWritten").getCount() == 8);
+        assertEquals("every healthy series must survive clustered poison isolation",
+                5, registry.meter("samplesWritten").getCount());
+        assertEquals(3, registry.meter("samplesLost").getCount());
+    }
+
     @Test
     public void survivesAnUnexpectedRuntimeFailureInTheSendPath() {
         sender.failNextSendsWithRuntime(1, new IllegalStateException("simulated transport bug"));
@@ -524,7 +644,7 @@ public class ShardedWriteBatcherTest {
         private final AtomicInteger runtimeFailuresLeft = new AtomicInteger();
         private volatile StorageException failure;
         private volatile RuntimeException runtimeFailure;
-        private volatile String poisonMetricName;
+        private volatile Set<String> poisonMetricNames = Set.of();
         private volatile CountDownLatch blockEntered;
         private volatile CountDownLatch blockRelease;
 
@@ -548,10 +668,10 @@ public class ShardedWriteBatcherTest {
             if (runtimeFailuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw runtimeFailure;
             }
-            final String poison = poisonMetricName;
-            if (poison != null && writeRequest.getTimeseriesList().stream().anyMatch(
-                    ts -> poison.equals(labelValue(ts, "__name__")))) {
-                throw new StorageException("simulated 400 for any request carrying " + poison);
+            final Set<String> poisons = poisonMetricNames;
+            if (!poisons.isEmpty() && writeRequest.getTimeseriesList().stream().anyMatch(
+                    ts -> poisons.contains(labelValue(ts, "__name__")))) {
+                throw new StorageException("simulated 400 for any request carrying one of " + poisons);
             }
             if (failuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw failure;
@@ -583,8 +703,8 @@ public class ShardedWriteBatcherTest {
         }
 
         /** Every request carrying a series with this {@code __name__} fails like a fatal 4xx. */
-        void poisonSeriesNamed(final String metricName) {
-            this.poisonMetricName = metricName;
+        void poisonSeriesNamed(final String... metricNames) {
+            this.poisonMetricNames = Set.of(metricNames);
         }
 
         int sendsStarted() {

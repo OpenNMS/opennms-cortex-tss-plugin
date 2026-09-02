@@ -138,7 +138,7 @@ allows because their series sets are disjoint.
 | `batchMaxSamples` | `2000` | A batch is flushed when it holds this many samples. |
 | `batchLingerMs` | `500` | A batch is flushed this long after its first sample, even if not full. |
 | `batchShardCapacity` | `65536` | Buffered samples per shard. A full shard blocks `store()` up to `batchEnqueueTimeoutMs`, then the write fails and the samples count as lost. |
-| `batchMaxRetries` | `3` | Retries per batch for retryable failures (HTTP 429, 5xx, and I/O errors), with exponential backoff starting at `batchRetryBackoffMs` and capped at 60s. Other 4xx responses are never retried; a coalesced request they reject is bisected and resent in halves, cornering the rejected series in a logarithmic number of resends so only what the backend actually rejects is dropped and counted on `samplesLost`. The retry budget is shared between a batch and any resends its bisection spawns, so a batch occupies its shard for a bounded number of requests and backoffs even when the backend mixes fatal and retryable failures. A request that exhausts the budget is dropped whole. The shard then moves on, so samples behind a dropped batch survive. |
+| `batchMaxRetries` | `3` | Retries per batch for retryable failures (HTTP 429, 5xx, and I/O errors), with exponential backoff starting at `batchRetryBackoffMs` and capped at 60s. Other 4xx responses are never retried, and they split two ways. Every 4xx except 400 and 413 rejects the request itself — bad credentials, wrong tenant, wrong endpoint, wrong method, unsupported payload — so every series in the batch would fail identically: the batch is dropped whole after a single request, with no bisection. 400 and 413 are the two a backend plausibly ties to one bad series, so a coalesced request they reject is bisected and resent in halves, cornering the rejected series in a logarithmic number of resends so only what the backend actually rejects is dropped and counted on `samplesLost`. The retry budget is shared between a batch and any resends its bisection spawns, so a batch occupies its shard for a bounded number of requests and backoffs even when the backend mixes fatal and retryable failures. A request that exhausts the budget is dropped whole. The shard then moves on, so samples behind a dropped batch survive. |
 | `batchRetryBackoffMs` | `1000` | Initial retry backoff; doubles per attempt. |
 | `batchEnqueueTimeoutMs` | `5000` | Upper bound on how long one `store()` call may block on full shards, shared across all samples of the call. When it expires, the remaining samples are only accepted if their shards have room. |
 
@@ -156,6 +156,75 @@ Sizing notes:
 The batcher adds three metrics to the `opennms-cortex:stats` output: `batch.batchesSent`,
 `batch.retries`, and the `batch.bufferedSamples` gauge. `samplesWritten` and `samplesLost` keep
 their meaning: samples acknowledged by the backend, and samples dropped anywhere in the plugin.
+
+## Monitoring the plugin
+
+The plugin keeps its own counters in a metric registry: `samplesWritten` and `samplesLost`
+(samples acknowledged by the backend, and samples dropped anywhere in the plugin), the
+external-tags cache meters, HTTP client gauges, and — with batching enabled — the `batch.*`
+metrics described above. There are two ways to read it:
+
+- **Interactively**, from the Karaf shell: `opennms-cortex:stats` prints a one-shot dump of the
+  whole registry.
+- **Continuously**, over JMX: the registry is mirrored as MBeans in the OpenNMS JVM under the
+  domain `org.opennms.plugins.tss.prometheus`, the same way OpenNMS's own daemons expose theirs.
+  Object names follow `org.opennms.plugins.tss.prometheus:name=<metric>,type=<meters|gauges>`;
+  meters carry a `Count` attribute (plus rates), gauges a `Value`.
+
+The JMX side means the collection already gathering OpenNMS's own JVM statistics (the
+`OpenNMS-JVM` service, collection `jsr160`, auto-bound to the OpenNMS node by the shipped
+`OpenNMS-JVM` detector in the default foreign-source definition) can trend, graph, and alert on
+the plugin's counters — `samplesLost` is the one to watch — with configuration only: no core
+changes, no rebuild. One step: edit `$OPENNMS_HOME/etc/jmx-datacollection-config.xml` and add
+these mbeans inside the existing `<jmx-collection name="jsr160">` element's `<mbeans>` section:
+
+```xml
+            <mbean name="PrometheusWriteSamples"
+                   objectname="org.opennms.plugins.tss.prometheus:name=samplesWritten,type=meters">
+                <attrib name="Count" alias="samplesWritten" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusLostSamples"
+                   objectname="org.opennms.plugins.tss.prometheus:name=samplesLost,type=meters">
+                <attrib name="Count" alias="samplesLost" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusBatchesSent"
+                   objectname="org.opennms.plugins.tss.prometheus:name=batch.batchesSent,type=meters">
+                <attrib name="Count" alias="batchesSent" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusBatchRetries"
+                   objectname="org.opennms.plugins.tss.prometheus:name=batch.retries,type=meters">
+                <attrib name="Count" alias="batchRetries" type="counter"/>
+            </mbean>
+            <mbean name="PrometheusBatchBuffered"
+                   objectname="org.opennms.plugins.tss.prometheus:name=batch.bufferedSamples,type=gauges">
+                <attrib name="Value" alias="bufferedSamples" type="gauge"/>
+            </mbean>
+```
+
+Then reload collectd (`bin/send-event.pl uei.opennms.org/internal/reloadDaemonConfig --parm
+'daemonName Collectd'`) or restart OpenNMS. The next `OpenNMS-JVM` collection cycle picks the new
+mbeans up; no new service, no collectd-configuration.xml change, no provisioning work.
+
+**Do not** try to extend `jsr160` from a file in `jmx-datacollection-config.d/` instead: OpenNMS
+does not merge same-named collections — the last one loaded replaces the other wholesale
+(`JmxDatacollectionConfig#merge` appends collections and the config DAO maps them by name), so a
+`.d` file named `jsr160` would silently replace the stock collection and its JVM statistics.
+
+A dedicated collection and service (a `.d` file with its own collection name, plus a `<service>`
+and `<collector>` entry in `collectd-configuration.xml` modeled on `OpenNMS-JVM`) also works and
+keeps the shipped file pristine, but requires one extra step the `jsr160` route avoids: collectd
+only collects services bound to a node's interface, and no detector exists for a custom service
+name — so the service must be added to the OpenNMS node's requisition (or a `Jsr160Detector`
+with the matching name added to its foreign-source definition) and synchronized.
+
+Notes:
+- The `batch.*` MBeans only exist while `batchingEnabled=true`; without batching, that part of the
+  collection simply yields no data.
+- The counters are per-JVM and reset on restart; `type="counter"` in the collection definition
+  handles that the same way any counter reset is handled.
+- The collected series are stored through this very plugin, which is exactly what you want for
+  the "is batching losing samples?" comparison: a nonzero `samplesLost` rate trends in the same
+  place as everything else.
 
 ## Sample ordering and out-of-order rejections
 
