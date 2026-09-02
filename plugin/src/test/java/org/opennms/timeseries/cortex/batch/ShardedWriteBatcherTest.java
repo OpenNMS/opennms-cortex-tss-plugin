@@ -439,6 +439,33 @@ public class ShardedWriteBatcherTest {
      * Nothing the send path throws may kill the shard thread: a dead shard silently strands every
      * series hashed to it until restart while the other shards look healthy.
      */
+    /**
+     * A rejection that is request-wide in effect but arrives as a plain 400 - timestamps the
+     * backend no longer accepts, a tenant over its series limit - must not cost one request per
+     * series: with n series all failing, naive bisection spends 2n-1 sequential requests on the
+     * shard thread while its queue fills. The consecutive-rejection cap concludes "systemic" after
+     * at most the bisection depth plus margin and drops the rest in one step.
+     */
+    @Test
+    public void boundsIsolationWhenEveryRequestIsRejected() throws Exception {
+        sender.failNextSends(Integer.MAX_VALUE, new StorageException("simulated request-wide 400"));
+        batcher = builder().shardCount(1).maxBatchSamples(64).lingerMs(60_000)
+                .maxRetries(3).retryBackoffMs(10).build();
+
+        // 64 distinct series, one sample each - the OpenNMS store() shape.
+        for (int i = 0; i < 64; i++) {
+            assertTrue(batcher.enqueue(sample(gauge("systemic_series_" + i), BASE.plusSeconds(i), i), null));
+        }
+        Awaitility.await().atMost(Duration.ofSeconds(10))
+                .until(() -> registry.meter("samplesLost").getCount() == 64);
+
+        // Cap for 64 series is log2(64)+2 = 8 consecutive rejections; the recursion unwind may
+        // spend a few more single requests before every sibling sees the systemic conclusion.
+        // The point is the order of magnitude: nowhere near 2n-1 = 127.
+        assertTrue("a systemic rejection must not bisect toward one request per series, sent "
+                + sender.sendsStarted(), sender.sendsStarted() <= 16);
+    }
+
     @Test
     public void survivesAnUnexpectedRuntimeFailureInTheSendPath() {
         sender.failNextSendsWithRuntime(1, new IllegalStateException("simulated transport bug"));

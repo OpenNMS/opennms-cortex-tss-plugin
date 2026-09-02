@@ -81,9 +81,12 @@ import prometheus.PrometheusTypes;
  * request itself, such as bad credentials or the wrong tenant, that every series in it would share
  * - is never bisected: every half would fail identically, so isolating it could only spend up to one
  * request per series confirming a foregone conclusion while the shard sat idle and its queue filled
- * up behind it. One retry budget of {@code maxRetries} is shared between a batch and every resend
- * its isolation spawns, so a batch occupies its shard for a bounded number of requests and backoffs
- * even when the backend mixes fatal and retryable failures. A series that still fails, or a request
+ * up behind it. Two budgets, shared between a batch and every resend its isolation spawns, bound
+ * the shard's exposure even when the backend mixes fatal and retryable failures: {@code maxRetries}
+ * caps the backoffs spent on retryable failures, and a consecutive-rejection cap sized to the
+ * bisection depth cuts isolation short when every request fails without a single success - the
+ * signature of a rejection that is request-wide in effect (timestamps the backend no longer
+ * accepts, a tenant over its series limit) even when its status code says per-series. A series that still fails, or a request
  * whose budget is exhausted, is dropped and counted on the shared {@code samplesLost} meter, and the
  * shard moves on. That trades bounded head-of-line blocking for forward progress; samples enqueued
  * behind a dropped batch survive.
@@ -375,17 +378,26 @@ public class ShardedWriteBatcher {
                 }
                 request.addTimeseries(ts);
             }
-            sendWithRetry(request.build(), organizationId, sampleCount, new RetryBudget(maxRetries));
+            final PrometheusRemote.WriteRequest built = request.build();
+            sendWithRetry(built, organizationId, sampleCount,
+                    new RetryBudget(maxRetries, rejectionCapFor(built.getTimeseriesCount())));
         }
     }
 
     private void sendWithRetry(final PrometheusRemote.WriteRequest request, final String organizationId,
                                final int sampleCount, final RetryBudget budget) {
+        if (request.getTimeseriesCount() > 1 && budget.isSystemic()) {
+            // A sibling higher up already concluded the rejection is request-wide; do not spend
+            // another request confirming it for this half.
+            drop(sampleCount, "isolation already concluded the rejection is systemic", null);
+            return;
+        }
         for (int attempt = 0; ; attempt++) {
             try {
                 sender.send(request, organizationId);
                 batchesSent.mark();
                 samplesWritten.mark(sampleCount);
+                budget.noteSuccess();
                 return;
             } catch (RetryableWriteException e) {
                 // The budget is shared with every resend spawned by isolating this request's
@@ -417,8 +429,22 @@ public class ShardedWriteBatcher {
                 drop(sampleCount, "the backend rejected the whole request, not a specific series", e);
                 return;
             } catch (StorageException e) {
+                final boolean systemic = budget.noteRejection();
                 final int seriesCount = request.getTimeseriesCount();
                 if (seriesCount > 1) {
+                    if (systemic) {
+                        // Every request of this batch's isolation has failed, for longer than any
+                        // single rejected series can explain (the longest all-failing run a lone
+                        // poison series produces is the bisection path down to it). The rejection
+                        // is request-wide in effect - a 400 for timestamps the backend no longer
+                        // accepts, a tenant over its series limit - even though its status says
+                        // per-series. Bisecting further would only replay the failure at every
+                        // node, up to one request per series; drop the rest in one step instead.
+                        drop(sampleCount, "isolation was cut short after " + budget.rejectionCap
+                                + " consecutive rejections without a single accepted request; "
+                                + "treating the rejection as systemic, not per-series", e);
+                        return;
+                    }
                     // A non-retryable rejection names one offender at best, but this request
                     // coalesces many unrelated series. Bisect and resend each half - still
                     // sequentially, on this thread, so ordering holds. A healthy half is
@@ -458,14 +484,22 @@ public class ShardedWriteBatcher {
     }
 
     /**
-     * Retries left for one original batch and everything its fatal-rejection isolation resends.
-     * Only touched from the owning shard thread, so a plain int suffices.
+     * Bounds for one original batch and everything its isolation resends, shared across the whole
+     * recursion. Two independent limits: retries left for retryable failures (backoffs), and the
+     * longest run of consecutive non-retryable rejections tolerated before the rejection is
+     * declared systemic - a lone poison series can only produce an all-failing run as long as the
+     * bisection path down to it, so a longer run means every leaf would fail and isolation is
+     * confirming a foregone conclusion at up to one request per series. Only touched from the
+     * owning shard thread, so plain ints suffice.
      */
     private static final class RetryBudget {
         private int remaining;
+        private final int rejectionCap;
+        private int consecutiveRejections;
 
-        RetryBudget(final int remaining) {
+        RetryBudget(final int remaining, final int rejectionCap) {
             this.remaining = remaining;
+            this.rejectionCap = rejectionCap;
         }
 
         boolean tryConsume() {
@@ -475,6 +509,35 @@ public class ShardedWriteBatcher {
             remaining--;
             return true;
         }
+
+        /** @return true when this rejection makes the run long enough to call systemic */
+        boolean noteRejection() {
+            consecutiveRejections++;
+            return isSystemic();
+        }
+
+        void noteSuccess() {
+            consecutiveRejections = 0;
+        }
+
+        boolean isSystemic() {
+            return consecutiveRejections >= rejectionCap;
+        }
+    }
+
+    /**
+     * The longest all-failing run a single rejected series can cause is the original request plus
+     * the bisection path down to that series - ceil(log2(seriesCount)) requests - so anything
+     * beyond that, plus margin for off-by-one shapes, is systemic.
+     */
+    static int rejectionCapFor(final int seriesCount) {
+        int depth = 0;
+        int n = 1;
+        while (n < seriesCount) {
+            n <<= 1;
+            depth++;
+        }
+        return depth + 2;
     }
 
     private void drop(final int sampleCount, final String reason, final Exception cause) {
