@@ -32,6 +32,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -466,6 +467,33 @@ public class ShardedWriteBatcherTest {
                 + sender.sendsStarted(), sender.sendsStarted() <= 16);
     }
 
+    /**
+     * The systemic conclusion must only be fed by multi-series rejections: a single-series (leaf)
+     * rejection is isolation succeeding - it has named the offender. Three poison series enqueued
+     * adjacently produce runs of leaf rejections; if those counted, the run would cross the cap
+     * (5 for 8 series) and the remaining healthy series would be wholesale-dropped as "systemic".
+     */
+    @Test
+    public void leafRejectionsDoNotCountTowardTheSystemicConclusion() {
+        sender.poisonSeriesNamed("cluster_poison_a", "cluster_poison_b", "cluster_poison_c");
+        batcher = builder().shardCount(1).maxBatchSamples(8).lingerMs(60_000).build();
+
+        // Poisons first, so their leaf rejections cluster into the longest possible run.
+        batcher.enqueue(sample(gauge("cluster_poison_a"), BASE, 1.0), null);
+        batcher.enqueue(sample(gauge("cluster_poison_b"), BASE, 2.0), null);
+        batcher.enqueue(sample(gauge("cluster_poison_c"), BASE, 3.0), null);
+        for (int i = 0; i < 5; i++) {
+            batcher.enqueue(sample(gauge("cluster_healthy_" + i), BASE, 10.0 + i), null);
+        }
+
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> registry.meter("samplesLost").getCount()
+                        + registry.meter("samplesWritten").getCount() == 8);
+        assertEquals("every healthy series must survive clustered poison isolation",
+                5, registry.meter("samplesWritten").getCount());
+        assertEquals(3, registry.meter("samplesLost").getCount());
+    }
+
     @Test
     public void survivesAnUnexpectedRuntimeFailureInTheSendPath() {
         sender.failNextSendsWithRuntime(1, new IllegalStateException("simulated transport bug"));
@@ -616,7 +644,7 @@ public class ShardedWriteBatcherTest {
         private final AtomicInteger runtimeFailuresLeft = new AtomicInteger();
         private volatile StorageException failure;
         private volatile RuntimeException runtimeFailure;
-        private volatile String poisonMetricName;
+        private volatile Set<String> poisonMetricNames = Set.of();
         private volatile CountDownLatch blockEntered;
         private volatile CountDownLatch blockRelease;
 
@@ -640,10 +668,10 @@ public class ShardedWriteBatcherTest {
             if (runtimeFailuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw runtimeFailure;
             }
-            final String poison = poisonMetricName;
-            if (poison != null && writeRequest.getTimeseriesList().stream().anyMatch(
-                    ts -> poison.equals(labelValue(ts, "__name__")))) {
-                throw new StorageException("simulated 400 for any request carrying " + poison);
+            final Set<String> poisons = poisonMetricNames;
+            if (!poisons.isEmpty() && writeRequest.getTimeseriesList().stream().anyMatch(
+                    ts -> poisons.contains(labelValue(ts, "__name__")))) {
+                throw new StorageException("simulated 400 for any request carrying one of " + poisons);
             }
             if (failuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw failure;
@@ -675,8 +703,8 @@ public class ShardedWriteBatcherTest {
         }
 
         /** Every request carrying a series with this {@code __name__} fails like a fatal 4xx. */
-        void poisonSeriesNamed(final String metricName) {
-            this.poisonMetricName = metricName;
+        void poisonSeriesNamed(final String... metricNames) {
+            this.poisonMetricNames = Set.of(metricNames);
         }
 
         int sendsStarted() {

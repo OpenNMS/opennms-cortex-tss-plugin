@@ -190,6 +190,71 @@ public class BatchingRealCortexCheck {
     }
 
     /**
+     * The systemic-rejection bound, against the real backend: a batch of samples that are ALL
+     * out-of-order draws genuine per-series-worded 400s from Cortex, but the effect is
+     * request-wide - every bisection leaf would fail. The cap must conclude systemic, drop the
+     * batch in a bounded number of requests, count every sample lost exactly once, and leave the
+     * shard alive for the next healthy batch.
+     */
+    @Test
+    public void systemicRejectionFromARealBackendIsBoundedAndSurvivable() throws Exception {
+        final CortexTSSConfig config = CortexTSSConfig.builder()
+                .batchingEnabled(true)
+                .batchShards(1)
+                .batchMaxSamples(64)
+                .batchLingerMs(200)
+                .build();
+        final CortexTSS storage = new CortexTSS(config, new KVStoreMock());
+
+        final int seriesCount = 24;
+        final Instant baseline = Instant.now().with(ChronoField.MICRO_OF_SECOND, 0L).minusSeconds(10);
+        final String runId = Long.toString(baseline.toEpochMilli(), 36);
+        final List<Metric> metrics = new ArrayList<>();
+        for (int i = 0; i < seriesCount; i++) {
+            metrics.add(ImmutableMetric.builder()
+                    .intrinsicTag("resourceId", "e2e/systemic" + i)
+                    .intrinsicTag("name", "systemic_e2e_" + runId + "_metric_" + i)
+                    .metaTag("mtype", Metric.Mtype.gauge.name())
+                    .build());
+        }
+
+        try {
+            // Phase 1: a healthy baseline sample per series, so the backend has a newer timestamp
+            // on record for every one of them.
+            final List<Sample> fresh = new ArrayList<>();
+            for (Metric m : metrics) {
+                fresh.add(ImmutableSample.builder().metric(m).time(baseline).value(1.0).build());
+            }
+            storage.store(fresh);
+            Awaitility.await("baseline accepted").atMost(Duration.ofSeconds(30))
+                    .until(() -> storage.getMetrics().meter("samplesWritten").getCount() == seriesCount);
+
+            // Phase 2: one OLDER sample per series in one batch. Cortex rejects each as
+            // out-of-order (400); since every series in the request is in that state, every
+            // bisected half fails identically - the systemic conclusion must fire and account
+            // for every sample exactly once, quickly, instead of one request per series.
+            final List<Sample> stale = new ArrayList<>();
+            for (Metric m : metrics) {
+                stale.add(ImmutableSample.builder().metric(m).time(baseline.minusSeconds(300)).value(2.0).build());
+            }
+            storage.store(stale);
+            Awaitility.await("systemic rejection fully accounted").atMost(Duration.ofSeconds(30))
+                    .until(() -> storage.getMetrics().meter("samplesLost").getCount() == seriesCount);
+
+            // Phase 3: the shard survives - a healthy batch flows immediately after.
+            final List<Sample> recovery = new ArrayList<>();
+            for (Metric m : metrics) {
+                recovery.add(ImmutableSample.builder().metric(m).time(baseline.plusSeconds(5)).value(3.0).build());
+            }
+            storage.store(recovery);
+            Awaitility.await("recovery batch accepted").atMost(Duration.ofSeconds(30))
+                    .until(() -> storage.getMetrics().meter("samplesWritten").getCount() == 2L * seriesCount);
+        } finally {
+            storage.destroy();
+        }
+    }
+
+    /**
      * Every raw (timestamp-in-seconds, value) pair the backend holds for the selector, in
      * timestamp order; empty while the series has not appeared yet. Fails the test outright if the
      * selector matches more than one stored series: one label set fanning out into several would

@@ -931,10 +931,6 @@ public class CortexTSS implements TimeSeriesStorage {
     }
 
     public void destroy() throws InterruptedException {
-       // Unregister the MBeans first: a leftover registration would block a reloaded bundle's
-       // reporter from ever registering its own.
-       jmxReporter.stop();
-
        if (batcher != null) {
            // Drain buffered samples while the HTTP client still works.
            batcher.destroy();
@@ -949,6 +945,9 @@ public class CortexTSS implements TimeSeriesStorage {
 
         client.dispatcher().cancelAll();
 
+        // Unregistered after the drain, so its samplesWritten/samplesLost marks still reach JMX; a
+        // leftover registration would block a reloaded bundle's reporter from registering its own.
+        jmxReporter.stop();
     }
 
     public MetricRegistry getMetrics() {

@@ -429,8 +429,10 @@ public class ShardedWriteBatcher {
                 drop(sampleCount, "the backend rejected the whole request, not a specific series", e);
                 return;
             } catch (StorageException e) {
-                final boolean systemic = budget.noteRejection();
                 final int seriesCount = request.getTimeseriesCount();
+                // Only a multi-series rejection is evidence of a systemic failure: a single-series
+                // rejection is isolation succeeding - it has named the offender.
+                final boolean systemic = seriesCount > 1 && budget.noteRejection();
                 if (seriesCount > 1) {
                     if (systemic) {
                         // Every request of this batch's isolation has failed, for longer than any
