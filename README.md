@@ -67,7 +67,6 @@ property-set batchShardCapacity 65536
 property-set batchMaxRetries 3
 property-set batchRetryBackoffMs 1000
 property-set batchEnqueueTimeoutMs 5000
-property-set jmxReportingEnabled false
 
 config:update
 ```
@@ -167,26 +166,17 @@ metrics described above. There are two ways to read it:
 
 - **Interactively**, from the Karaf shell: `opennms-cortex:stats` prints a one-shot dump of the
   whole registry.
-- **Continuously**, over JMX — **opt-in, off by default**: with `jmxReportingEnabled=true`, the
-  registry is mirrored as MBeans in the OpenNMS JVM under the domain
-  `org.opennms.plugins.tss.prometheus`. Object names follow
-  `org.opennms.plugins.tss.prometheus:name=<metric>,type=<meters|gauges>`; meters carry a `Count`
-  attribute, gauges a `Value`. The publisher is implemented directly on the JDK's
-  `javax.management` API — no extra bundles, nothing that can fail to wire — and it announces
-  itself in the log at INFO on every start: `JMX metric reporting started: N MBeans registered
-  in domain org.opennms.plugins.tss.prometheus.` If that line is absent with the flag enabled,
-  reporting did not start and the log says why; it is isolated from the storage path either way.
+- **Continuously**, over JMX: the registry is mirrored as MBeans in the OpenNMS JVM under the
+  domain `org.opennms.plugins.tss.prometheus`, the same way OpenNMS's own daemons expose theirs.
+  Object names follow `org.opennms.plugins.tss.prometheus:name=<metric>,type=<meters|gauges>`;
+  meters carry a `Count` attribute (plus rates), gauges a `Value`.
 
 The JMX side means the collection already gathering OpenNMS's own JVM statistics (the
 `OpenNMS-JVM` service, collection `jsr160`, auto-bound to the OpenNMS node by the shipped
 `OpenNMS-JVM` detector in the default foreign-source definition) can trend, graph, and alert on
 the plugin's counters — `samplesLost` is the one to watch — with configuration only: no core
-changes, no rebuild. Two steps:
-
-1. Enable `jmxReportingEnabled=true` in the plugin config
-   (`etc/org.opennms.plugins.tss.prometheus.cfg`, or `config:edit` in the Karaf shell).
-2. Edit `$OPENNMS_HOME/etc/jmx-datacollection-config.xml` and add these mbeans inside the
-   existing `<jmx-collection name="jsr160">` element's `<mbeans>` section:
+changes, no rebuild. One step: edit `$OPENNMS_HOME/etc/jmx-datacollection-config.xml` and add
+these mbeans inside the existing `<jmx-collection name="jsr160">` element's `<mbeans>` section:
 
 ```xml
             <mbean name="PrometheusWriteSamples"

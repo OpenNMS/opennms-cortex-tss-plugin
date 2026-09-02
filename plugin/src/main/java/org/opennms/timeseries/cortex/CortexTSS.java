@@ -79,6 +79,7 @@ import org.xerial.snappy.Snappy;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.jmx.JmxReporter;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
@@ -148,7 +149,7 @@ public class CortexTSS implements TimeSeriesStorage {
     private final MetricRegistry metrics = new MetricRegistry();
     private final Meter samplesWritten = metrics.meter("samplesWritten");
     private final Meter samplesLost = metrics.meter("samplesLost");
-    private final RegistryJmxPublisher jmxPublisher;
+    private final JmxReporter jmxReporter;
 
     // when retrieving aggregated time series data we loose the metric information and thus take it from cache
     private final Cache<String, Metric> metricCache;
@@ -231,28 +232,13 @@ public class CortexTSS implements TimeSeriesStorage {
             this.batcher = null;
         }
 
-        // Mirror the registry as JMX MBeans so the collector already scraping this JVM for
-        // OpenNMS's own stats can trend and alert on these counters too - samplesLost in
-        // particular. The opennms-cortex:stats Karaf command shows the same registry
-        // interactively; see "Monitoring the plugin" in the README for a collection config
-        // snippet. Off unless asked for, and even then nothing here may propagate: this is
-        // observability for the storage path, and it must never be the thing that takes the
-        // storage path down. RegistryJmxPublisher is pure JDK javax.management - it logs at
-        // INFO how many MBeans it registered, and has no dependency that can fail to wire.
-        this.jmxPublisher = config.isJmxReportingEnabled() ? startJmxPublisher() : null;
-    }
-
-    /** @return the started publisher, or null when it could not be started. */
-    private RegistryJmxPublisher startJmxPublisher() {
-        try {
-            final RegistryJmxPublisher publisher = new RegistryJmxPublisher(metrics, JMX_DOMAIN);
-            publisher.start();
-            return publisher;
-        } catch (Throwable e) {
-            LOG.error("JMX metric reporting could not be started; continuing without it. "
-                    + "The opennms-cortex:stats shell command is unaffected.", e);
-            return null;
-        }
+        // Mirror the registry as JMX MBeans under the plugin's config PID, the same way core's
+        // own daemons expose theirs (the timeseries integration layer registers
+        // org.opennms.timeseries identically), so the JMX collection already scraping this JVM
+        // can trend these counters - samplesLost above all. See "Monitoring the plugin" in the
+        // README for a collection recipe.
+        this.jmxReporter = JmxReporter.forRegistry(metrics).inDomain(JMX_DOMAIN).build();
+        this.jmxReporter.start();
     }
 
     /**
@@ -946,15 +932,8 @@ public class CortexTSS implements TimeSeriesStorage {
 
     public void destroy() throws InterruptedException {
        // Unregister the MBeans first: a leftover registration would block a reloaded bundle's
-       // publisher from ever registering its own. Guarded like startup - teardown of the
-       // observability must never keep the batcher from draining.
-       if (jmxPublisher != null) {
-           try {
-               jmxPublisher.stop();
-           } catch (Throwable e) {
-               LOG.warn("Failed to stop the JMX metric publisher; its MBeans may linger until JVM restart.", e);
-           }
-       }
+       // reporter from ever registering its own.
+       jmxReporter.stop();
 
        if (batcher != null) {
            // Drain buffered samples while the HTTP client still works.
